@@ -1,0 +1,32 @@
+[tool.poetry]
+name = "file-indexer"
+version = "0.1.0"
+description = "A Python-based file indexing system using DuckDB"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "file_indexer"}]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+duckdb = "^0.9.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0"
+black = "^23.0"
+isort = "^5.0"
+flake8 = "^6.0"
+
+[tool.poetry.scripts]
+file-indexer = "file_indexer.cli:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3 

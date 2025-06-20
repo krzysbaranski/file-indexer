@@ -2,6 +2,23 @@
 
 A Python-based file indexing system that creates and maintains a DuckDB database of files with their metadata, including checksums, modification dates, and file sizes.
 
+## Project Structure
+
+```
+file-index/
+├── pyproject.toml          # Poetry configuration and dependencies
+├── README.md               # This file
+├── requirements.txt        # Pip requirements (for non-Poetry users)
+├── file_indexer/          # Main package
+│   ├── __init__.py        # Package initialization
+│   ├── cli.py             # Command-line interface
+│   └── indexer.py         # Core indexing functionality
+├── examples/              # Usage examples
+│   └── example_usage.py   # Programmatic usage example
+└── tests/                 # Test suite
+    └── __init__.py
+```
+
 ## Features
 
 - **Comprehensive File Metadata**: Tracks file path, filename, SHA256 checksum, modification datetime, and file size
@@ -13,6 +30,25 @@ A Python-based file indexing system that creates and maintains a DuckDB database
 - **Programmatic API**: Full Python API for custom integrations
 
 ## Installation
+
+### Using Poetry (Recommended)
+
+1. Install Poetry if you haven't already:
+```bash
+curl -sSL https://install.python-poetry.org | python3 -
+```
+
+2. Install the project and dependencies:
+```bash
+poetry install
+```
+
+3. Activate the virtual environment:
+```bash
+poetry shell
+```
+
+### Using pip
 
 1. Install the required dependency:
 ```bash
@@ -41,44 +77,50 @@ CREATE TABLE files (
 
 #### Index a Directory
 ```bash
-# Index current directory recursively
-python file_indexer.py --scan .
+# Using Poetry
+poetry run file-indexer --scan .
+
+# Or with Poetry shell activated
+file-indexer --scan .
+
+# Using direct Python execution
+python -m file_indexer.cli --scan .
 
 # Index a specific directory
-python file_indexer.py --scan /path/to/directory
+file-indexer --scan /path/to/directory
 
 # Index without recursion (current directory only)
-python file_indexer.py --scan /path/to/directory --no-recursive
+file-indexer --scan /path/to/directory --no-recursive
 
 # Use custom database file
-python file_indexer.py --db custom_index.db --scan /path/to/directory
+file-indexer --db custom_index.db --scan /path/to/directory
 ```
 
 #### Search Files
 ```bash
 # Search by filename pattern
-python file_indexer.py --search-filename "*.py"
+file-indexer --search-filename "*.py"
 
 # Search by path pattern
-python file_indexer.py --search-path "*Documents*"
+file-indexer --search-path "*Documents*"
 
 # Search by exact checksum
-python file_indexer.py --search-checksum abc123def456...
+file-indexer --search-checksum abc123def456...
 
 # Combine multiple search criteria
-python file_indexer.py --search-filename "*.txt" --search-path "*backup*"
+file-indexer --search-filename "*.txt" --search-path "*backup*"
 ```
 
 #### Find Duplicates
 ```bash
 # Find all duplicate files
-python file_indexer.py --find-duplicates
+file-indexer --find-duplicates
 ```
 
 #### Database Statistics
 ```bash
 # Show database statistics
-python file_indexer.py --stats
+file-indexer --stats
 ```
 
 ### Programmatic Usage
@@ -136,9 +178,12 @@ Close the database connection.
 ## Examples
 
 ### Basic Usage
-```python
-# Run the example script
-python example_usage.py
+```bash
+# Run the example script with Poetry
+poetry run python examples/example_usage.py
+
+# Or with Poetry shell activated
+python examples/example_usage.py
 ```
 
 ### Advanced Queries
@@ -199,6 +244,50 @@ indexer.close()
 - `"Directory does not exist"`: Check the directory path
 - `"Error reading file"`: File permissions or I/O issues
 - `"Error accessing file"`: File may be locked or have permission issues
+
+## Development
+
+### Setting up for Development
+
+1. Clone the repository and install development dependencies:
+```bash
+git clone <repository-url>
+cd file-index
+poetry install
+```
+
+2. Activate the virtual environment:
+```bash
+poetry shell
+```
+
+### Code Quality Tools
+
+The project includes several development tools:
+
+```bash
+# Format code with Black
+poetry run black file_indexer/ examples/ tests/
+
+# Sort imports with isort
+poetry run isort file_indexer/ examples/ tests/
+
+# Lint code with flake8
+poetry run flake8 file_indexer/ examples/ tests/
+
+# Run tests
+poetry run pytest
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+poetry run pytest
+
+# Run tests with coverage
+poetry run pytest --cov=file_indexer
+```
 
 ## Contributing
 
