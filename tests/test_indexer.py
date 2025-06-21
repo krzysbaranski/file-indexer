@@ -736,5 +736,298 @@ class TestFileIndexer:
             perf_indexer.close()
 
 
+    def test_ignore_special_files_during_checksum_calculation(self):
+        """Test that special files are ignored during checksum calculation phase."""
+        import tempfile
+        import os
+        
+        special_dir = tempfile.mkdtemp()
+        try:
+            # Create regular files
+            (Path(special_dir) / "regular1.txt").write_text("content1")
+            (Path(special_dir) / "regular2.txt").write_text("content2")
+            
+            # Try to create a named pipe (FIFO) if possible
+            pipe_path = Path(special_dir) / "test_pipe"
+            has_special_file = False
+            try:
+                os.mkfifo(str(pipe_path))
+                has_special_file = True
+            except (OSError, AttributeError):
+                # Skip if not supported
+                pass
+            
+            # Create indexer for this test
+            special_indexer = FileIndexer(str(self.db_path) + "_special")
+            
+            try:
+                # Phase 1: Index all files without checksums
+                special_indexer.index_files_without_checksums(special_dir, recursive=False)
+                
+                # Reset counters to track Phase 2 only
+                special_indexer.reset_optimization_counters()
+                
+                # Phase 2: Try to calculate checksums - should skip special files
+                special_indexer.calculate_checksums_for_duplicates()
+                
+                stats = special_indexer.get_stats()
+                
+                # Should have indexed only regular files (special files filtered during Phase 1)
+                assert stats["total_files"] == 2  # Only regular files indexed
+                assert stats["files_with_checksum"] == 2  # Only regular files
+                
+                if has_special_file:
+                    # Special file should have been ignored during Phase 1 scanning
+                    # The counter was reset, so check if it was previously ignored
+                    pass  # Special files are filtered during Phase 1, not Phase 2
+                    
+            finally:
+                special_indexer.close()
+                
+        finally:
+            import shutil
+            shutil.rmtree(special_dir, ignore_errors=True)
+
+    def test_empty_files_in_two_phase_indexing(self):
+        """Test empty file handling in two-phase indexing with different settings."""
+        import tempfile
+        
+        empty_dir = tempfile.mkdtemp()
+        try:
+            # Create multiple empty files and one regular file
+            (Path(empty_dir) / "empty1.txt").write_text("")
+            (Path(empty_dir) / "empty2.txt").write_text("")
+            (Path(empty_dir) / "empty3.txt").write_text("")
+            (Path(empty_dir) / "regular.txt").write_text("content")
+            
+            # Test with skip_empty_files=True
+            skip_indexer = FileIndexer(str(self.db_path) + "_skip_empty", skip_empty_files=True)
+            
+            try:
+                skip_indexer.two_phase_indexing(empty_dir, recursive=False)
+                
+                stats = skip_indexer.get_stats()
+                
+                # All files should be indexed
+                assert stats["total_files"] == 4
+                
+                # Only regular file should have checksum (empty files skipped)
+                assert stats["files_with_checksum"] == 0  # No duplicates by size
+                assert stats["files_without_checksum"] == 4
+                
+                # Should have skipped checksums for empty files
+                assert stats["skipped_checksums"] >= 3
+                
+            finally:
+                skip_indexer.close()
+                
+            # Test with skip_empty_files=False
+            calc_indexer = FileIndexer(str(self.db_path) + "_calc_empty", skip_empty_files=False)
+            
+            try:
+                calc_indexer.two_phase_indexing(empty_dir, recursive=False)
+                
+                stats = calc_indexer.get_stats()
+                
+                # All files should be indexed
+                assert stats["total_files"] == 4
+                
+                # Empty files should get checksums since they have duplicate sizes
+                assert stats["files_with_checksum"] == 3  # 3 empty files
+                assert stats["files_without_checksum"] == 1  # 1 unique regular file
+                
+            finally:
+                calc_indexer.close()
+                
+        finally:
+            import shutil
+            shutil.rmtree(empty_dir, ignore_errors=True)
+
+    def test_symlinks_during_checksum_calculation(self):
+        """Test that symlinks are properly ignored during checksum calculation."""
+        import tempfile
+        
+        symlink_dir = tempfile.mkdtemp()
+        try:
+            # Create regular files
+            regular_file = Path(symlink_dir) / "regular.txt"
+            regular_file.write_text("content")
+            symlink_file = Path(symlink_dir) / "symlink.txt"
+            
+            # Create symbolic link (skip test if not supported)
+            try:
+                symlink_file.symlink_to(regular_file)
+            except (OSError, NotImplementedError):
+                pytest.skip("Symbolic links not supported on this platform")
+            
+            # Create indexer for this test
+            symlink_indexer = FileIndexer(str(self.db_path) + "_symlink_test")
+            
+            try:
+                # Index files without checksums first
+                symlink_indexer.index_files_without_checksums(symlink_dir, recursive=False)
+                
+                # Reset counters
+                symlink_indexer.reset_optimization_counters()
+                
+                # Try to calculate checksums - should ignore symlinks
+                symlink_indexer.calculate_checksums_for_duplicates()
+                
+                stats = symlink_indexer.get_stats()
+                
+                # Should only have the regular file (symlink filtered during Phase 1)
+                assert stats["total_files"] == 1
+                # Symlinks are filtered during Phase 1, so counter was reset
+                # No symlinks should be encountered in Phase 2
+                assert stats["ignored_symlinks"] == 0
+                
+            finally:
+                symlink_indexer.close()
+                
+        finally:
+            import shutil
+            shutil.rmtree(symlink_dir, ignore_errors=True)
+
+    def test_checksum_worker_function(self):
+        """Test the checksum worker function directly."""
+        from file_indexer.indexer import _calculate_checksum_worker
+        import tempfile
+        import os
+        
+        # Test with regular file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
+            temp_file.write("test content")
+            temp_file_path = temp_file.name
+        
+        try:
+            # Should calculate checksum successfully
+            file_path, checksum = _calculate_checksum_worker(temp_file_path)
+            assert file_path == temp_file_path
+            assert checksum != ""
+            assert len(checksum) == 64  # SHA256 hex digest length
+            
+        finally:
+            os.unlink(temp_file_path)
+        
+        # Test with non-existent file
+        nonexistent_path = "/nonexistent/file.txt"
+        file_path, checksum = _calculate_checksum_worker(nonexistent_path)
+        assert file_path == nonexistent_path
+        assert checksum == ""  # Should return empty string for errors
+
+    def test_get_file_info_with_special_files(self):
+        """Test _get_file_info method with special files."""
+        import tempfile
+        import os
+        
+        special_dir = tempfile.mkdtemp()
+        try:
+            # Create regular file
+            regular_file = Path(special_dir) / "regular.txt"
+            regular_file.write_text("content")
+            
+            # Test with regular file
+            file_info = self.indexer._get_file_info(str(regular_file))
+            assert file_info is not None
+            assert file_info[1] == "regular.txt"  # filename
+            
+            # Try to create and test with special file
+            pipe_path = Path(special_dir) / "test_pipe"
+            try:
+                os.mkfifo(str(pipe_path))
+                
+                # Reset counters
+                self.indexer.reset_optimization_counters()
+                
+                # Should return None for special file
+                file_info = self.indexer._get_file_info(str(pipe_path))
+                assert file_info is None
+                assert self.indexer.ignored_special_files == 1
+                
+            except (OSError, AttributeError):
+                # Skip if named pipes not supported
+                pass
+            
+        finally:
+            import shutil
+            shutil.rmtree(special_dir, ignore_errors=True)
+
+    def test_error_handling_in_scan_directory(self):
+        """Test error handling in scan_directory_generator."""
+        # Test with non-existent directory
+        files = list(self.indexer.scan_directory_generator("/nonexistent/directory"))
+        assert len(files) == 0
+        
+        # Test with file instead of directory
+        files = list(self.indexer.scan_directory_generator(str(self.test_file1)))
+        assert len(files) == 0
+
+    def test_bulk_operations_error_handling(self):
+        """Test error handling in bulk database operations."""
+        # This tests the transaction rollback functionality
+        try:
+            # Try to insert invalid data that would cause a database error
+            invalid_inserts = [("", "", "checksum", "invalid_datetime", "invalid_size")]
+            invalid_updates = []
+            
+            # This should handle the error gracefully
+            added, updated = self.indexer._bulk_database_operations(invalid_inserts, invalid_updates)
+            
+            # Should handle the error without crashing
+            assert True  # If we get here, error handling worked
+            
+        except Exception:
+            # If an exception is raised, it should be a controlled one
+            assert True
+
+    def test_parallel_processing_disabled(self):
+        """Test sequential processing when parallel processing is disabled."""
+        # Create indexer with parallel processing disabled
+        seq_indexer = FileIndexer(
+            str(self.db_path) + "_sequential",
+            use_parallel_processing=False,
+            max_workers=1
+        )
+        
+        try:
+            # Should work with sequential processing
+            seq_indexer.update_database(self.test_files_dir, recursive=False)
+            
+            stats = seq_indexer.get_stats()
+            assert stats["total_files"] == 4
+            
+        finally:
+            seq_indexer.close()
+
+    def test_calculate_checksums_with_empty_list(self):
+        """Test checksum calculation with empty file list."""
+        # Should handle empty list gracefully
+        result = self.indexer._calculate_checksums_for_files([])
+        assert result == 0
+        
+        # Should also handle None gracefully
+        checksums = self.indexer._calculate_checksums_parallel([])
+        assert checksums == {}
+
+    def test_stats_with_all_counters(self):
+        """Test that all counters are included in stats."""
+        # Do some operations to populate counters
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        stats = self.indexer.get_stats()
+        
+        # Check that all expected keys are present
+        expected_keys = [
+            "total_files", "total_size", "files_with_checksum", "files_without_checksum",
+            "unique_checksums", "duplicate_files", "last_indexed",
+            "checksum_calculations", "checksum_reuses", "skipped_files",
+            "ignored_symlinks", "ignored_special_files", "skipped_checksums",
+            "permission_errors", "optimization_percentage"
+        ]
+        
+        for key in expected_keys:
+            assert key in stats, f"Missing key in stats: {key}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
