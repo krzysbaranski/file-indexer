@@ -142,7 +142,11 @@ The indexer automatically filters out files that are not regular files to avoid 
 - **Sockets**: Network and Unix domain sockets
 - **Other special files**: Any file that is not a regular file
 
-This filtering happens automatically and cannot be disabled. The number of skipped files is reported in the statistics and can help identify unusual files in your directory structure.
+This filtering happens automatically at multiple stages:
+1. **During initial scanning**: Files are filtered when discovering files to index
+2. **During checksum calculation**: Files are re-checked and filtered if the filesystem changed between indexing and checksum calculation (e.g., a regular file was replaced with a symlink)
+
+The filtering cannot be disabled. The number of skipped files is reported in the statistics and can help identify unusual files in your directory structure.
 
 ## Configuration Options
 
