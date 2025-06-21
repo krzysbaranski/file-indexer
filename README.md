@@ -123,6 +123,7 @@ The two-phase approach provides significant performance benefits:
 
 2. **Phase 2 (Targeted)**: Calculate checksums only for potential duplicates
    - Only files with the same size get checksums
+   - Respects the `skip_empty_files` setting (empty files are excluded from checksum calculation)
    - Dramatically reduces checksum calculations
    - Can be run separately or scheduled
 

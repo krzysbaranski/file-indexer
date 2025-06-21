@@ -903,6 +903,7 @@ class FileIndexer:
         """
         Phase 2: Calculate checksums only for files that have the same size as other files.
         This identifies potential duplicates efficiently.
+        Respects the skip_empty_files setting.
 
         Args:
             batch_size: Number of files to process checksums for in each batch
@@ -910,14 +911,26 @@ class FileIndexer:
         print("Phase 2: Finding files with duplicate sizes...")
 
         # Find all file sizes that have multiple files
-        duplicate_sizes_query = """
-        SELECT file_size, COUNT(*) as file_count
-        FROM files
-        WHERE checksum IS NULL
-        GROUP BY file_size
-        HAVING COUNT(*) > 1
-        ORDER BY file_size
-        """
+        # Exclude empty files if skip_empty_files is True
+        if self.skip_empty_files:
+            duplicate_sizes_query = """
+            SELECT file_size, COUNT(*) as file_count
+            FROM files
+            WHERE checksum IS NULL AND file_size > 0
+            GROUP BY file_size
+            HAVING COUNT(*) > 1
+            ORDER BY file_size
+            """
+            print("Skipping empty files in duplicate detection (skip_empty_files=True)")
+        else:
+            duplicate_sizes_query = """
+            SELECT file_size, COUNT(*) as file_count
+            FROM files
+            WHERE checksum IS NULL
+            GROUP BY file_size
+            HAVING COUNT(*) > 1
+            ORDER BY file_size
+            """
 
         duplicate_sizes = self.conn.execute(duplicate_sizes_query).fetchall()
 
@@ -937,6 +950,12 @@ class FileIndexer:
             print(f"Processing {file_count} files of size {file_size:,} bytes...")
 
             # Get all files with this size that don't have checksums
+            # Apply the same empty file filtering as in the duplicate size query
+            if self.skip_empty_files and file_size == 0:
+                # Skip empty files - this shouldn't happen due to the outer query filter,
+                # but adding this as a safety check
+                continue
+                
             files_query = """
             SELECT path, filename
             FROM files
@@ -969,6 +988,8 @@ class FileIndexer:
             print(f"Ignored {self.ignored_symlinks} symbolic links during checksum calculation")
         if self.ignored_special_files > 0:
             print(f"Ignored {self.ignored_special_files} special files during checksum calculation")
+        if self.skipped_checksums > 0:
+            print(f"Skipped checksums for {self.skipped_checksums} files (empty or too large)")  
 
         # Show final statistics
         stats = self.get_stats()
@@ -991,7 +1012,7 @@ class FileIndexer:
         if not file_paths:
             return 0
 
-        # Filter out symlinks and special files before checksum calculation
+        # Filter out symlinks, special files, and empty files before checksum calculation
         valid_file_paths = []
         for file_path in file_paths:
             try:
@@ -1007,6 +1028,17 @@ class FileIndexer:
                 if not path_obj.is_file():
                     self.ignored_special_files += 1
                     continue
+                
+                # Skip empty files if skip_empty_files is True
+                if self.skip_empty_files:
+                    try:
+                        file_size = path_obj.stat().st_size
+                        if file_size == 0:
+                            self.skipped_checksums += 1
+                            continue
+                    except (OSError, PermissionError):
+                        # If we can't get file size, let it through and handle later
+                        pass
                     
                 valid_file_paths.append(file_path)
                 
