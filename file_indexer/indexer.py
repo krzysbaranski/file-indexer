@@ -21,8 +21,19 @@ def _calculate_checksum_worker(
     Returns (file_path, checksum) tuple.
     """
     try:
+        path_obj = Path(file_path)
+
+        # Safety check: Skip symlinks and special files
+        if path_obj.is_symlink():
+            print(f"Skipping symlink during checksum calculation: {file_path}")
+            return (file_path, "")
+
+        if not path_obj.is_file():
+            print(f"Skipping special file during checksum calculation: {file_path}")
+            return (file_path, "")
+
         hash_func: Any = getattr(hashlib, algorithm)()
-        with Path(file_path).open("rb") as f:
+        with path_obj.open("rb") as f:
             # Read file in larger chunks for better performance
             for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
                 hash_func.update(chunk)
@@ -71,6 +82,7 @@ class FileIndexer:
         self.checksum_reuses = 0
         self.skipped_files = 0
         self.ignored_symlinks = 0
+        self.ignored_special_files = 0  # Device files, pipes, sockets, etc.
         self.skipped_checksums = 0  # Files that don't get checksums
         self.permission_errors = 0  # Files that couldn't be accessed due to permissions
 
@@ -148,6 +160,52 @@ class FileIndexer:
         except Exception as e:
             print(f"Schema migration failed (this is normal for new databases): {e}")
 
+    def _should_process_file(
+        self, file_path: str | Path, check_empty_files: bool = False
+    ) -> bool:
+        """
+        Shared helper function to determine if a file should be processed.
+        Handles symlinks, special files, and optionally empty files.
+        Updates appropriate counters.
+
+        Args:
+            file_path: Path to the file to check
+            check_empty_files: Whether to also check for empty files (respects skip_empty_files setting)
+
+        Returns:
+            True if the file should be processed, False otherwise
+        """
+        try:
+            path_obj = Path(file_path)
+
+            # Skip symbolic links
+            if path_obj.is_symlink():
+                self.ignored_symlinks += 1
+                return False
+
+            # Skip special files (device files, pipes, sockets, etc.)
+            # Only process regular files
+            if not path_obj.is_file():
+                self.ignored_special_files += 1
+                return False
+
+            # Skip empty files if requested and skip_empty_files is True
+            if check_empty_files and self.skip_empty_files:
+                try:
+                    file_size = path_obj.stat().st_size
+                    if file_size == 0:
+                        self.skipped_checksums += 1
+                        return False
+                except (OSError, PermissionError):
+                    # If we can't get file size, let it through and handle later
+                    pass
+
+            return True
+
+        except (OSError, PermissionError):
+            # If we can't check the file, assume it's not processable
+            return False
+
     def _should_calculate_checksum(self, file_size: int) -> bool:
         """
         Determine if we should calculate checksum for a file based on size.
@@ -185,7 +243,7 @@ class FileIndexer:
             recursive: Whether to scan subdirectories recursively
 
         Yields:
-            File paths (excluding symbolic links)
+            File paths (excluding symbolic links, device files, pipes, sockets, etc.)
         """
         if not Path(directory_path).exists():
             print(f"Directory does not exist: {directory_path}")
@@ -200,16 +258,15 @@ class FileIndexer:
                 for root, _dirs, filenames in os.walk(directory_path):
                     for filename in filenames:
                         file_path = Path(root) / filename
-                        if file_path.is_symlink():
-                            self.ignored_symlinks += 1
-                            continue
-                        yield str(file_path)
+
+                        # Use shared helper function
+                        if self._should_process_file(file_path):
+                            yield str(file_path)
             else:
                 for item in Path(directory_path).iterdir():
-                    if item.is_file() and not item.is_symlink():
+                    # Use shared helper function
+                    if self._should_process_file(item):
                         yield str(item)
-                    elif item.is_symlink():
-                        self.ignored_symlinks += 1
         except OSError as e:
             print(f"Error scanning directory {directory_path}: {e}")
 
@@ -457,8 +514,12 @@ class FileIndexer:
             f"Configuration: max_checksum_size={self.max_checksum_size:,} bytes, skip_empty_files={self.skip_empty_files}"
         )
 
+        # Reset only per-scan counters (not cumulative performance counters)
         self.ignored_symlinks = 0
+        self.ignored_special_files = 0
         self.skipped_checksums = 0
+        self.skipped_files = 0
+        self.permission_errors = 0
 
         # Process files in batches to manage memory usage
         file_generator = self.scan_directory_generator(directory_path, recursive)
@@ -497,6 +558,10 @@ class FileIndexer:
 
         if self.ignored_symlinks > 0:
             print(f"Ignored {self.ignored_symlinks} symbolic links")
+        if self.ignored_special_files > 0:
+            print(
+                f"Ignored {self.ignored_special_files} special files (device files, pipes, sockets, etc.)"
+            )
 
         if self.skipped_checksums > 0:
             print(
@@ -814,6 +879,7 @@ class FileIndexer:
         stats["checksum_reuses"] = self.checksum_reuses
         stats["skipped_files"] = self.skipped_files
         stats["ignored_symlinks"] = self.ignored_symlinks
+        stats["ignored_special_files"] = self.ignored_special_files
         stats["skipped_checksums"] = self.skipped_checksums
         stats["permission_errors"] = self.permission_errors
 
@@ -833,6 +899,7 @@ class FileIndexer:
         self.checksum_reuses = 0
         self.skipped_files = 0
         self.ignored_symlinks = 0
+        self.ignored_special_files = 0
         self.skipped_checksums = 0
         self.permission_errors = 0
 
@@ -871,6 +938,7 @@ class FileIndexer:
         """
         Phase 2: Calculate checksums only for files that have the same size as other files.
         This identifies potential duplicates efficiently.
+        Respects the skip_empty_files setting.
 
         Args:
             batch_size: Number of files to process checksums for in each batch
@@ -878,14 +946,26 @@ class FileIndexer:
         print("Phase 2: Finding files with duplicate sizes...")
 
         # Find all file sizes that have multiple files
-        duplicate_sizes_query = """
-        SELECT file_size, COUNT(*) as file_count
-        FROM files
-        WHERE checksum IS NULL
-        GROUP BY file_size
-        HAVING COUNT(*) > 1
-        ORDER BY file_size
-        """
+        # Exclude empty files if skip_empty_files is True
+        if self.skip_empty_files:
+            duplicate_sizes_query = """
+            SELECT file_size, COUNT(*) as file_count
+            FROM files
+            WHERE checksum IS NULL AND file_size > 0
+            GROUP BY file_size
+            HAVING COUNT(*) > 1
+            ORDER BY file_size
+            """
+            print("Skipping empty files in duplicate detection (skip_empty_files=True)")
+        else:
+            duplicate_sizes_query = """
+            SELECT file_size, COUNT(*) as file_count
+            FROM files
+            WHERE checksum IS NULL
+            GROUP BY file_size
+            HAVING COUNT(*) > 1
+            ORDER BY file_size
+            """
 
         duplicate_sizes = self.conn.execute(duplicate_sizes_query).fetchall()
 
@@ -905,6 +985,12 @@ class FileIndexer:
             print(f"Processing {file_count} files of size {file_size:,} bytes...")
 
             # Get all files with this size that don't have checksums
+            # Apply the same empty file filtering as in the duplicate size query
+            if self.skip_empty_files and file_size == 0:
+                # Skip empty files - this shouldn't happen due to the outer query filter,
+                # but adding this as a safety check
+                continue
+
             files_query = """
             SELECT path, filename
             FROM files
@@ -932,6 +1018,20 @@ class FileIndexer:
             f"Phase 2 completed: Processed {total_processed} files, updated {total_updated} with checksums"
         )
 
+        # Move all summary reporting to the end for better organization
+        if self.ignored_symlinks > 0:
+            print(
+                f"Ignored {self.ignored_symlinks} symbolic links during checksum calculation"
+            )
+        if self.ignored_special_files > 0:
+            print(
+                f"Ignored {self.ignored_special_files} special files during checksum calculation"
+            )
+        if self.skipped_checksums > 0:
+            print(
+                f"Skipped checksums for {self.skipped_checksums} files (empty or too large)"
+            )
+
         # Show final statistics
         stats = self.get_stats()
         print(
@@ -942,6 +1042,7 @@ class FileIndexer:
     def _calculate_checksums_for_files(self, file_paths: list[str]) -> int:
         """
         Calculate checksums for a specific list of files and update the database.
+        Filters out symlinks and special files during processing.
 
         Args:
             file_paths: List of file paths to calculate checksums for
@@ -952,15 +1053,25 @@ class FileIndexer:
         if not file_paths:
             return 0
 
-        # Calculate checksums in parallel
-        checksums = self._calculate_checksums_parallel(file_paths)
+        # Filter out symlinks, special files, and empty files before checksum calculation
+        valid_file_paths = []
+        for file_path in file_paths:
+            # Use shared helper function with empty file checking
+            if self._should_process_file(file_path, check_empty_files=True):
+                valid_file_paths.append(file_path)
+
+        if not valid_file_paths:
+            return 0
+
+        # Calculate checksums in parallel for valid files only
+        checksums = self._calculate_checksums_parallel(valid_file_paths)
 
         if not checksums:
             return 0
 
         # Prepare database updates
         update_data = []
-        for file_path in file_paths:
+        for file_path in valid_file_paths:
             if file_path in checksums:
                 path_obj = Path(file_path)
                 directory = str(path_obj.parent)
@@ -1046,8 +1157,13 @@ class FileIndexer:
         """
         Get file information including path, filename, checksum, and modification time.
         Maintains compatibility with the old interface but supports nullable checksums.
+        Filters out symlinks and special files.
         """
         try:
+            # Use shared helper function
+            if not self._should_process_file(file_path):
+                return None
+
             path_obj = Path(file_path)
             stat_info = path_obj.stat()
 
