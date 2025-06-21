@@ -58,7 +58,7 @@ class FileIndexer:
         hash_func: Any = getattr(hashlib, algorithm)()
 
         try:
-            with open(file_path, "rb") as f:
+            with Path(file_path).open("rb") as f:
                 # Read file in chunks to handle large files efficiently
                 for chunk in iter(lambda: f.read(8192), b""):
                     hash_func.update(chunk)
@@ -110,11 +110,11 @@ class FileIndexer:
         """
         files: list[str] = []
 
-        if not os.path.exists(directory_path):
+        if not Path(directory_path).exists():
             print(f"Directory does not exist: {directory_path}")
             return files
 
-        if not os.path.isdir(directory_path):
+        if not Path(directory_path).is_dir():
             print(f"Path is not a directory: {directory_path}")
             return files
 
@@ -122,12 +122,11 @@ class FileIndexer:
             if recursive:
                 for root, _dirs, filenames in os.walk(directory_path):
                     for filename in filenames:
-                        files.append(os.path.join(root, filename))
+                        files.append(str(Path(root) / filename))
             else:
-                for item in os.listdir(directory_path):
-                    item_path = os.path.join(directory_path, item)
-                    if os.path.isfile(item_path):
-                        files.append(item_path)
+                for item in Path(directory_path).iterdir():
+                    if item.is_file():
+                        files.append(str(item))
         except OSError as e:
             print(f"Error scanning directory {directory_path}: {e}")
 
@@ -186,7 +185,13 @@ class FileIndexer:
                         SET checksum = ?, modification_datetime = ?, file_size = ?, indexed_at = CURRENT_TIMESTAMP
                         WHERE path = ? AND filename = ?
                     """,
-                        [checksum, modification_datetime, file_size, directory, filename],
+                        [
+                            checksum,
+                            modification_datetime,
+                            file_size,
+                            directory,
+                            filename,
+                        ],
                     )
                     updated += 1
             else:
@@ -298,14 +303,20 @@ class FileIndexer:
         stats["total_files"] = total_files_result[0] if total_files_result else 0
 
         # Total size
-        total_size_result = self.conn.execute("SELECT SUM(file_size) FROM files").fetchone()
-        stats["total_size"] = (total_size_result[0] if total_size_result and total_size_result[0] else 0)
+        total_size_result = self.conn.execute(
+            "SELECT SUM(file_size) FROM files"
+        ).fetchone()
+        stats["total_size"] = (
+            total_size_result[0] if total_size_result and total_size_result[0] else 0
+        )
 
         # Unique checksums
         unique_checksums_result = self.conn.execute(
             "SELECT COUNT(DISTINCT checksum) FROM files"
         ).fetchone()
-        stats["unique_checksums"] = unique_checksums_result[0] if unique_checksums_result else 0
+        stats["unique_checksums"] = (
+            unique_checksums_result[0] if unique_checksums_result else 0
+        )
 
         # Duplicate files
         stats["duplicate_files"] = stats["total_files"] - stats["unique_checksums"]
