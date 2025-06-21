@@ -282,6 +282,34 @@ class TestFileIndexer:
         assert self.indexer.checksum_calculations == 0
         assert self.indexer.checksum_reuses == 0
 
+    def test_skipped_files_in_stats(self):
+        """Test that skipped files are properly tracked and exposed in stats."""
+        # Reset counters
+        self.indexer.reset_optimization_counters()
+        
+        # Index files initially
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Verify no files were skipped on first run
+        stats = self.indexer.get_stats()
+        assert stats["skipped_files"] == 0
+        
+        # Reset counters to track only the second update
+        self.indexer.reset_optimization_counters()
+        
+        # Update database again without modifying files
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Verify skipped files are tracked in stats
+        stats = self.indexer.get_stats()
+        assert stats["skipped_files"] == 3  # All 3 files should be skipped
+        assert "skipped_files" in stats  # Ensure key exists in stats dictionary
+        
+        # Verify reset works for skipped files too
+        self.indexer.reset_optimization_counters()
+        stats = self.indexer.get_stats()
+        assert stats["skipped_files"] == 0
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

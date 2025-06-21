@@ -25,6 +25,7 @@ class FileIndexer:
         # Statistics for optimization tracking
         self.checksum_calculations = 0
         self.checksum_reuses = 0
+        self.skipped_files = 0
 
     def _create_table(self) -> None:
         """Create the files table if it doesn't exist."""
@@ -169,7 +170,6 @@ class FileIndexer:
         updated = 0
         added = 0
         errors = 0
-        skipped = 0  # Files that haven't changed
 
         for file_path in files:
             try:
@@ -225,7 +225,7 @@ class FileIndexer:
                         updated += 1
                     else:
                         # File hasn't changed, no update needed
-                        skipped += 1
+                        self.skipped_files += 1
                 else:
                     # Insert new file
                     self.conn.execute(
@@ -247,7 +247,7 @@ class FileIndexer:
                 print(f"Processed {processed}/{len(files)} files...")
 
         print(
-            f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Skipped: {skipped}, Errors: {errors}"
+            f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Skipped: {self.skipped_files}, Errors: {errors}"
         )
         
         # Show optimization benefits
@@ -375,6 +375,7 @@ class FileIndexer:
         # Optimization statistics
         stats["checksum_calculations"] = self.checksum_calculations
         stats["checksum_reuses"] = self.checksum_reuses
+        stats["skipped_files"] = self.skipped_files
         total_operations = self.checksum_calculations + self.checksum_reuses
         if total_operations > 0:
             stats["optimization_percentage"] = round(
@@ -389,6 +390,7 @@ class FileIndexer:
         """Reset the optimization performance counters."""
         self.checksum_calculations = 0
         self.checksum_reuses = 0
+        self.skipped_files = 0
 
     def close(self) -> None:
         """Close the database connection."""
