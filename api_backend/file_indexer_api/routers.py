@@ -41,7 +41,7 @@ async def health_check(db: DatabaseService = Depends(get_database_service)):
             database_connected=db.is_connected(),
             database_path=db.db_path,
             total_files=file_count,
-            api_version="0.1.0"
+            api_version="0.1.0",
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -50,7 +50,7 @@ async def health_check(db: DatabaseService = Depends(get_database_service)):
             database_connected=False,
             database_path=db.db_path,
             total_files=0,
-            api_version="0.1.0"
+            api_version="0.1.0",
         )
 
 
@@ -58,37 +58,42 @@ async def health_check(db: DatabaseService = Depends(get_database_service)):
 search_router = APIRouter(prefix="/search", tags=["Search"])
 
 
-@search_router.post("/", response_model=SearchResponse, responses={400: {"model": ErrorResponse}})
+@search_router.post(
+    "/", response_model=SearchResponse, responses={400: {"model": ErrorResponse}}
+)
 async def search_files(
-    search_request: SearchRequest,
-    db: DatabaseService = Depends(get_database_service)
+    search_request: SearchRequest, db: DatabaseService = Depends(get_database_service)
 ):
     """Search for files based on various criteria."""
     try:
         files, total_count = db.search_files(search_request)
         has_more = (search_request.offset + len(files)) < total_count
-        
-        return SearchResponse(
-            files=files,
-            total_count=total_count,
-            has_more=has_more
-        )
+
+        return SearchResponse(files=files, total_count=total_count, has_more=has_more)
     except Exception as e:
         logger.error(f"Search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@search_router.get("/", response_model=SearchResponse, responses={400: {"model": ErrorResponse}})
+@search_router.get(
+    "/", response_model=SearchResponse, responses={400: {"model": ErrorResponse}}
+)
 async def search_files_get(
-    filename_pattern: Optional[str] = Query(None, description="Pattern to match filenames"),
-    path_pattern: Optional[str] = Query(None, description="Pattern to match file paths"),
+    filename_pattern: Optional[str] = Query(
+        None, description="Pattern to match filenames"
+    ),
+    path_pattern: Optional[str] = Query(
+        None, description="Pattern to match file paths"
+    ),
     checksum: Optional[str] = Query(None, description="Exact checksum to match"),
-    has_checksum: Optional[bool] = Query(None, description="Filter by whether files have checksums"),
+    has_checksum: Optional[bool] = Query(
+        None, description="Filter by whether files have checksums"
+    ),
     min_size: Optional[int] = Query(None, description="Minimum file size in bytes"),
     max_size: Optional[int] = Query(None, description="Maximum file size in bytes"),
     limit: int = Query(100, ge=1, le=10000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
-    db: DatabaseService = Depends(get_database_service)
+    db: DatabaseService = Depends(get_database_service),
 ):
     """Search for files using GET parameters."""
     search_request = SearchRequest(
@@ -99,9 +104,9 @@ async def search_files_get(
         min_size=min_size,
         max_size=max_size,
         limit=limit,
-        offset=offset
+        offset=offset,
     )
-    
+
     return await search_files(search_request, db)
 
 
@@ -111,18 +116,20 @@ duplicates_router = APIRouter(prefix="/duplicates", tags=["Duplicates"])
 
 @duplicates_router.get("/", response_model=DuplicatesResponse)
 async def find_duplicates(
-    min_group_size: int = Query(2, ge=2, description="Minimum number of files in a group"),
-    db: DatabaseService = Depends(get_database_service)
+    min_group_size: int = Query(
+        2, ge=2, description="Minimum number of files in a group"
+    ),
+    db: DatabaseService = Depends(get_database_service),
 ):
     """Find duplicate files grouped by checksum."""
     try:
         duplicate_groups = db.find_duplicates(min_group_size)
         total_duplicate_files = sum(group.file_count for group in duplicate_groups)
-        
+
         return DuplicatesResponse(
             duplicate_groups=duplicate_groups,
             total_groups=len(duplicate_groups),
-            total_duplicate_files=total_duplicate_files
+            total_duplicate_files=total_duplicate_files,
         )
     except Exception as e:
         logger.error(f"Finding duplicates failed: {e}")
@@ -150,4 +157,4 @@ async def get_visualization_data(db: DatabaseService = Depends(get_database_serv
         return db.get_visualization_data()
     except Exception as e:
         logger.error(f"Getting visualization data failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))

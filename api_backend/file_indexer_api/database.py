@@ -27,7 +27,7 @@ class DatabaseService:
 
     def __init__(self, db_path: str):
         """Initialize the database service.
-        
+
         Args:
             db_path: Path to the DuckDB database file
         """
@@ -38,7 +38,7 @@ class DatabaseService:
         """Connect to the database."""
         if not Path(self.db_path).exists():
             raise FileNotFoundError(f"Database file not found: {self.db_path}")
-        
+
         self.conn = duckdb.connect(self.db_path, read_only=True)
         logger.info(f"Connected to database: {self.db_path}")
 
@@ -53,12 +53,14 @@ class DatabaseService:
         """Check if connected to database."""
         return self.conn is not None
 
-    def search_files(self, search_request: SearchRequest) -> tuple[list[FileRecord], int]:
+    def search_files(
+        self, search_request: SearchRequest
+    ) -> tuple[list[FileRecord], int]:
         """Search for files based on criteria.
-        
+
         Args:
             search_request: Search parameters
-            
+
         Returns:
             Tuple of (file_records, total_count)
         """
@@ -117,10 +119,9 @@ class DatabaseService:
         ORDER BY modification_datetime DESC, path, filename
         LIMIT ? OFFSET ?
         """
-        
+
         results = self.conn.execute(
-            data_query, 
-            params + [search_request.limit, search_request.offset]
+            data_query, params + [search_request.limit, search_request.offset]
         ).fetchall()
 
         files = [
@@ -139,10 +140,10 @@ class DatabaseService:
 
     def find_duplicates(self, min_group_size: int = 2) -> list[DuplicateGroup]:
         """Find duplicate files grouped by checksum.
-        
+
         Args:
             min_group_size: Minimum number of files in a group to be considered duplicates
-            
+
         Returns:
             List of duplicate groups
         """
@@ -174,17 +175,14 @@ class DatabaseService:
 
         # Group results by checksum
         groups_dict: dict[str, DuplicateGroup] = {}
-        
+
         for row in results:
             checksum = row[0]
             if checksum not in groups_dict:
                 groups_dict[checksum] = DuplicateGroup(
-                    checksum=checksum,
-                    file_size=row[1],
-                    file_count=row[2],
-                    files=[]
+                    checksum=checksum, file_size=row[1], file_count=row[2], files=[]
                 )
-            
+
             groups_dict[checksum].files.append(
                 FileRecord(
                     path=row[3],
@@ -329,10 +327,10 @@ class DatabaseService:
             ],
             extension_stats=[
                 ExtensionStats(
-                    extension=row[0], 
-                    count=row[1], 
-                    total_size=row[2], 
-                    average_size=row[3]
+                    extension=row[0],
+                    count=row[1],
+                    total_size=row[2],
+                    average_size=row[3],
                 )
                 for row in extension_stats
             ],
@@ -340,15 +338,15 @@ class DatabaseService:
                 {
                     "month": row[0].isoformat() if row[0] else None,
                     "count": row[1],
-                    "total_size": row[2]
+                    "total_size": row[2],
                 }
                 for row in timeline
-            ]
+            ],
         )
 
     def get_file_count(self) -> int:
         """Get total number of files in the database."""
         if not self.conn:
             raise RuntimeError("Database not connected")
-        
-        return self.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] 
+
+        return self.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]

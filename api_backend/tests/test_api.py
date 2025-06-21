@@ -26,15 +26,17 @@ def mock_db_service():
 @pytest.fixture
 def client(mock_db_service):
     """Test client with mocked database service."""
+
     def override_get_database_service():
         return mock_db_service
-    
+
     from file_indexer_api.routers import get_database_service
+
     app.dependency_overrides[get_database_service] = override_get_database_service
-    
+
     with TestClient(app) as test_client:
         yield test_client
-    
+
     # Clean up
     app.dependency_overrides.clear()
 
@@ -69,11 +71,11 @@ def test_search_files_get(client, mock_db_service):
             checksum="abc123",
             modification_datetime="2023-01-01T12:00:00",
             file_size=1024,
-            indexed_at="2023-01-01T13:00:00"
+            indexed_at="2023-01-01T13:00:00",
         )
     ]
     mock_db_service.search_files.return_value = (mock_files, 1)
-    
+
     response = client.get("/search/?filename_pattern=*.txt&limit=10")
     assert response.status_code == 200
     data = response.json()
@@ -88,13 +90,9 @@ def test_search_files_post(client, mock_db_service):
     # Mock search response
     mock_files = []
     mock_db_service.search_files.return_value = (mock_files, 0)
-    
-    search_request = {
-        "filename_pattern": "*.py",
-        "min_size": 1000,
-        "limit": 5
-    }
-    
+
+    search_request = {"filename_pattern": "*.py", "min_size": 1000, "limit": 5}
+
     response = client.post("/search/", json=search_request)
     assert response.status_code == 200
     data = response.json()
@@ -106,7 +104,7 @@ def test_find_duplicates(client, mock_db_service):
     """Test the find duplicates endpoint."""
     # Mock duplicates response
     mock_db_service.find_duplicates.return_value = []
-    
+
     response = client.get("/duplicates/")
     assert response.status_code == 200
     data = response.json()
@@ -130,10 +128,10 @@ def test_database_stats(client, mock_db_service):
         smallest_file_size=0,
         most_recent_modification=None,
         oldest_modification=None,
-        unique_directories=100
+        unique_directories=100,
     )
     mock_db_service.get_database_stats.return_value = mock_stats
-    
+
     response = client.get("/stats/")
     assert response.status_code == 200
     data = response.json()
@@ -145,7 +143,8 @@ def test_database_stats(client, mock_db_service):
 @patch.dict(os.environ, {"FILE_INDEXER_DB_PATH": "nonexistent.db"})
 def test_missing_database_file():
     """Test behavior when database file is missing."""
-    # This test would normally cause the app to exit, so we'll just verify 
+    # This test would normally cause the app to exit, so we'll just verify
     # that the path check works correctly
     from pathlib import Path
-    assert not Path("nonexistent.db").exists() 
+
+    assert not Path("nonexistent.db").exists()
