@@ -160,7 +160,9 @@ class FileIndexer:
         except Exception as e:
             print(f"Schema migration failed (this is normal for new databases): {e}")
 
-    def _should_process_file(self, file_path: str | Path, check_empty_files: bool = False) -> bool:
+    def _should_process_file(
+        self, file_path: str | Path, check_empty_files: bool = False
+    ) -> bool:
         """
         Shared helper function to determine if a file should be processed.
         Handles symlinks, special files, and optionally empty files.
@@ -256,13 +258,13 @@ class FileIndexer:
                 for root, _dirs, filenames in os.walk(directory_path):
                     for filename in filenames:
                         file_path = Path(root) / filename
-                        
+
                         # Use shared helper function
                         if self._should_process_file(file_path):
                             yield str(file_path)
             else:
                 for item in Path(directory_path).iterdir():
-                    # Use shared helper function  
+                    # Use shared helper function
                     if self._should_process_file(item):
                         yield str(item)
         except OSError as e:
