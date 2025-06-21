@@ -737,8 +737,8 @@ class TestFileIndexer:
 
     def test_ignore_special_files_during_checksum_calculation(self):
         """Test that special files are ignored during checksum calculation phase."""
-        import tempfile
         import os
+        import tempfile
 
         special_dir = tempfile.mkdtemp()
         try:
@@ -900,9 +900,10 @@ class TestFileIndexer:
 
     def test_checksum_worker_function(self):
         """Test the checksum worker function directly."""
-        from file_indexer.indexer import _calculate_checksum_worker
-        import tempfile
         import os
+        import tempfile
+
+        from file_indexer.indexer import _calculate_checksum_worker
 
         # Test with regular file
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
@@ -927,8 +928,8 @@ class TestFileIndexer:
 
     def test_get_file_info_with_special_files(self):
         """Test _get_file_info method with special files."""
-        import tempfile
         import os
+        import tempfile
 
         special_dir = tempfile.mkdtemp()
         try:

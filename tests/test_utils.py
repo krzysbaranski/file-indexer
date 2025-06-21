@@ -3,6 +3,7 @@ Tests for the file_indexer.utils module.
 """
 
 import pytest
+
 from file_indexer.utils import format_size
 
 

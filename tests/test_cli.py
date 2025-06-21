@@ -2,12 +2,10 @@
 Tests for the file_indexer.cli module.
 """
 
-import tempfile
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 import sys
-import argparse
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from file_indexer.cli import main, parse_size
 

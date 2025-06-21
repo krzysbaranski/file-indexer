@@ -2,9 +2,9 @@
 Tests for the file_indexer.__main__ module.
 """
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-import sys
 
 
 class TestMain:
