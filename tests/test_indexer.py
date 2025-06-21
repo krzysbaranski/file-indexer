@@ -217,6 +217,71 @@ class TestFileIndexer:
         assert updated_stats["total_files"] == initial_stats["total_files"]
         assert updated_stats["last_indexed"] > initial_stats["last_indexed"]
 
+    def test_checksum_optimization(self):
+        """Test that checksum calculation is optimized for unchanged files."""
+        # Reset counters
+        self.indexer.reset_optimization_counters()
+        
+        # Index the files initially
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        initial_calculations = self.indexer.checksum_calculations
+        initial_reuses = self.indexer.checksum_reuses
+        
+        # All files should have required checksum calculations on first run
+        assert initial_calculations == 3  # 3 files in root directory
+        assert initial_reuses == 0
+        
+        # Update database again without modifying files
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Should have reused existing checksums for unmodified files
+        assert self.indexer.checksum_calculations == initial_calculations  # No additional calculations
+        assert self.indexer.checksum_reuses == 3  # All 3 files reused checksums
+        
+        # Check optimization statistics
+        stats = self.indexer.get_stats()
+        assert stats["checksum_calculations"] == 3
+        assert stats["checksum_reuses"] == 3
+        assert stats["optimization_percentage"] == 50.0  # 3/(3+3) = 50%
+
+    def test_checksum_optimization_with_modified_file(self):
+        """Test that optimization still calculates checksums for modified files."""
+        # Reset counters and index initially
+        self.indexer.reset_optimization_counters()
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Modify one file
+        with open(self.test_file1, "w") as f:
+            f.write("Modified content")
+        
+        # Reset counters to track only the second update
+        self.indexer.reset_optimization_counters()
+        
+        # Update database again
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Should have calculated checksum for 1 modified file and reused 2 others
+        assert self.indexer.checksum_calculations == 1
+        assert self.indexer.checksum_reuses == 2
+        
+        stats = self.indexer.get_stats()
+        assert stats["optimization_percentage"] == round((2/3) * 100, 2)  # 2 reused out of 3 total
+
+    def test_reset_optimization_counters(self):
+        """Test resetting optimization counters."""
+        # Do some operations
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Verify counters have values
+        assert self.indexer.checksum_calculations > 0
+        
+        # Reset counters
+        self.indexer.reset_optimization_counters()
+        
+        # Verify counters are reset
+        assert self.indexer.checksum_calculations == 0
+        assert self.indexer.checksum_reuses == 0
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

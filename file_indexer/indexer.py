@@ -22,6 +22,9 @@ class FileIndexer:
         self.db_path = db_path
         self.conn = duckdb.connect(db_path)
         self._create_table()
+        # Statistics for optimization tracking
+        self.checksum_calculations = 0
+        self.checksum_reuses = 0
 
     def _create_table(self) -> None:
         """Create the files table if it doesn't exist."""
@@ -68,13 +71,15 @@ class FileIndexer:
             return ""
 
     def _get_file_info(
-        self, file_path: str
+        self, file_path: str, existing_record: tuple | None = None
     ) -> tuple[str, str, str, datetime, int] | None:
         """
         Get file information including path, filename, checksum, and modification time.
+        Only calculates checksum if file is new or has been modified.
 
         Args:
             file_path: Full path to the file
+            existing_record: Tuple of (checksum, modification_datetime) from database if exists
 
         Returns:
             Tuple of (path, filename, checksum, modification_datetime, file_size) or None if error
@@ -87,11 +92,21 @@ class FileIndexer:
             filename = path_obj.name
             modification_datetime = datetime.fromtimestamp(stat_info.st_mtime)
             file_size = stat_info.st_size
-            checksum = self._calculate_checksum(file_path)
 
+            # Check if we need to calculate checksum
+            if existing_record:
+                existing_checksum, existing_mod_time = existing_record
+                # If modification time hasn't changed, reuse existing checksum
+                if modification_datetime == existing_mod_time:
+                    self.checksum_reuses += 1
+                    return (directory, filename, existing_checksum, modification_datetime, file_size)
+            
+            # File is new or modified, calculate checksum
+            checksum = self._calculate_checksum(file_path)
             if not checksum:  # Skip files we couldn't read
                 return None
 
+            self.checksum_calculations += 1
             return (directory, filename, checksum, modification_datetime, file_size)
         except OSError as e:
             print(f"Error accessing file {file_path}: {e}")
@@ -135,6 +150,7 @@ class FileIndexer:
     def update_database(self, directory_path: str, recursive: bool = True) -> None:
         """
         Update database with files from the specified directory.
+        Optimized to avoid recalculating checksums for unmodified files.
 
         Args:
             directory_path: Path to directory to scan
@@ -153,65 +169,94 @@ class FileIndexer:
         updated = 0
         added = 0
         errors = 0
+        skipped = 0  # Files that haven't changed
 
         for file_path in files:
-            file_info = self._get_file_info(file_path)
-            if not file_info:
-                errors += 1
-                continue
+            try:
+                path_obj = Path(file_path)
+                directory = str(path_obj.parent)
+                filename = path_obj.name
 
-            directory, filename, checksum, modification_datetime, file_size = file_info
+                # Check if file already exists in database
+                existing = self.conn.execute(
+                    """
+                    SELECT checksum, modification_datetime, file_size
+                    FROM files
+                    WHERE path = ? AND filename = ?
+                """,
+                    [directory, filename],
+                ).fetchone()
 
-            # Check if file already exists in database
-            existing = self.conn.execute(
-                """
-                SELECT checksum, modification_datetime
-                FROM files
-                WHERE path = ? AND filename = ?
-            """,
-                [directory, filename],
-            ).fetchone()
+                # Get file info (only calculates checksum if needed)
+                file_info = self._get_file_info(
+                    file_path, 
+                    (existing[0], existing[1]) if existing else None
+                )
+                
+                if not file_info:
+                    errors += 1
+                    continue
 
-            if existing:
-                existing_checksum, existing_mod_time = existing
-                # Update if file has been modified
-                if (
-                    checksum != existing_checksum
-                    or modification_datetime != existing_mod_time
-                ):
+                directory, filename, checksum, modification_datetime, file_size = file_info
+
+                if existing:
+                    existing_checksum, existing_mod_time, existing_size = existing
+                    # Check if anything has changed
+                    if (
+                        checksum != existing_checksum
+                        or modification_datetime != existing_mod_time
+                        or file_size != existing_size
+                    ):
+                        # Update record
+                        self.conn.execute(
+                            """
+                            UPDATE files
+                            SET checksum = ?, modification_datetime = ?, file_size = ?, indexed_at = CURRENT_TIMESTAMP
+                            WHERE path = ? AND filename = ?
+                        """,
+                            [
+                                checksum,
+                                modification_datetime,
+                                file_size,
+                                directory,
+                                filename,
+                            ],
+                        )
+                        updated += 1
+                    else:
+                        # File hasn't changed, no update needed
+                        skipped += 1
+                else:
+                    # Insert new file
                     self.conn.execute(
                         """
-                        UPDATE files
-                        SET checksum = ?, modification_datetime = ?, file_size = ?, indexed_at = CURRENT_TIMESTAMP
-                        WHERE path = ? AND filename = ?
+                        INSERT INTO files (path, filename, checksum, modification_datetime, file_size)
+                        VALUES (?, ?, ?, ?, ?)
                     """,
-                        [
-                            checksum,
-                            modification_datetime,
-                            file_size,
-                            directory,
-                            filename,
-                        ],
+                        [directory, filename, checksum, modification_datetime, file_size],
                     )
-                    updated += 1
-            else:
-                # Insert new file
-                self.conn.execute(
-                    """
-                    INSERT INTO files (path, filename, checksum, modification_datetime, file_size)
-                    VALUES (?, ?, ?, ?, ?)
-                """,
-                    [directory, filename, checksum, modification_datetime, file_size],
-                )
-                added += 1
+                    added += 1
 
-            processed += 1
-            if processed % 100 == 0:
-                print(f"Processed {processed}/{len(files)} files...")
+                processed += 1
+                if processed % 100 == 0:
+                    print(f"Processed {processed}/{len(files)} files...")
+
+            except Exception as e:
+                print(f"Error processing file {file_path}: {e}")
+                errors += 1
+                processed += 1
 
         print(
-            f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Errors: {errors}"
+            f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Skipped: {skipped}, Errors: {errors}"
         )
+        
+        # Show optimization benefits
+        total_checksum_ops = self.checksum_calculations + self.checksum_reuses
+        if total_checksum_ops > 0:
+            optimization_pct = (self.checksum_reuses / total_checksum_ops) * 100
+            print(f"Performance: Calculated {self.checksum_calculations} checksums, reused {self.checksum_reuses} ({optimization_pct:.1f}% optimization)")
+        else:
+            print("Performance: No checksum operations performed")
 
     def search_files(
         self,
@@ -291,7 +336,7 @@ class FileIndexer:
 
     def get_stats(self) -> dict:
         """
-        Get database statistics.
+        Get database statistics including performance optimization metrics.
 
         Returns:
             Dictionary with database statistics
@@ -327,7 +372,23 @@ class FileIndexer:
         ).fetchone()
         stats["last_indexed"] = last_indexed_result[0] if last_indexed_result else None
 
+        # Optimization statistics
+        stats["checksum_calculations"] = self.checksum_calculations
+        stats["checksum_reuses"] = self.checksum_reuses
+        total_operations = self.checksum_calculations + self.checksum_reuses
+        if total_operations > 0:
+            stats["optimization_percentage"] = round(
+                (self.checksum_reuses / total_operations) * 100, 2
+            )
+        else:
+            stats["optimization_percentage"] = 0
+
         return stats
+
+    def reset_optimization_counters(self) -> None:
+        """Reset the optimization performance counters."""
+        self.checksum_calculations = 0
+        self.checksum_reuses = 0
 
     def close(self) -> None:
         """Close the database connection."""
