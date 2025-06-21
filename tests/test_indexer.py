@@ -327,6 +327,7 @@ class TestFileIndexer:
         assert self.indexer.checksum_calculations == 0
         assert self.indexer.checksum_reuses == 0
         assert self.indexer.skipped_checksums == 0
+        assert self.indexer.ignored_special_files == 0
 
     def test_skipped_files_in_stats(self):
         """Test that skipped files are properly tracked and exposed in stats."""
@@ -393,6 +394,7 @@ class TestFileIndexer:
         stats = self.indexer.get_stats()
         assert stats["ignored_symlinks"] == 1
         assert "ignored_symlinks" in stats  # Ensure key exists
+        assert "ignored_special_files" in stats  # Ensure special files counter exists
 
         # Database should only contain 5 files (not the symlink)
         assert stats["total_files"] == 5

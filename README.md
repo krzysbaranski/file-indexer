@@ -11,6 +11,7 @@ A high-performance file indexing tool using DuckDB with parallel processing and 
 - **Duplicate file detection**
 - **Flexible search capabilities**
 - **Memory-efficient batch processing**
+- **Automatic filtering** of symbolic links, device files, pipes, sockets, and other special files
 
 ## Installation
 
@@ -130,6 +131,18 @@ The two-phase approach provides significant performance benefits:
 For a dataset with 100,000 files where only 5% are potential duplicates:
 - **Traditional approach**: 100,000 checksum calculations
 - **Two-phase approach**: ~5,000 checksum calculations (95% reduction)
+
+## File Filtering
+
+The indexer automatically filters out files that are not regular files to avoid errors and improve performance:
+
+- **Symbolic links**: Skipped to avoid duplication and potential infinite loops
+- **Device files**: Block and character devices (e.g., `/dev/sda`, `/dev/tty`)
+- **Named pipes (FIFOs)**: Inter-process communication pipes
+- **Sockets**: Network and Unix domain sockets
+- **Other special files**: Any file that is not a regular file
+
+This filtering happens automatically and cannot be disabled. The number of skipped files is reported in the statistics and can help identify unusual files in your directory structure.
 
 ## Configuration Options
 

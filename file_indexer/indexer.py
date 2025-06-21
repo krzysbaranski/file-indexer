@@ -71,6 +71,7 @@ class FileIndexer:
         self.checksum_reuses = 0
         self.skipped_files = 0
         self.ignored_symlinks = 0
+        self.ignored_special_files = 0  # Device files, pipes, sockets, etc.
         self.skipped_checksums = 0  # Files that don't get checksums
         self.permission_errors = 0  # Files that couldn't be accessed due to permissions
 
@@ -185,7 +186,7 @@ class FileIndexer:
             recursive: Whether to scan subdirectories recursively
 
         Yields:
-            File paths (excluding symbolic links)
+            File paths (excluding symbolic links, device files, pipes, sockets, etc.)
         """
         if not Path(directory_path).exists():
             print(f"Directory does not exist: {directory_path}")
@@ -200,16 +201,29 @@ class FileIndexer:
                 for root, _dirs, filenames in os.walk(directory_path):
                     for filename in filenames:
                         file_path = Path(root) / filename
+
+                        # Skip symbolic links
                         if file_path.is_symlink():
                             self.ignored_symlinks += 1
                             continue
+
+                        # Skip special files (device files, pipes, sockets, etc.)
+                        # Only process regular files
+                        if not file_path.is_file():
+                            self.ignored_special_files += 1
+                            continue
+
                         yield str(file_path)
             else:
                 for item in Path(directory_path).iterdir():
-                    if item.is_file() and not item.is_symlink():
-                        yield str(item)
-                    elif item.is_symlink():
+                    if item.is_symlink():
                         self.ignored_symlinks += 1
+                        continue
+                    elif item.is_file():
+                        yield str(item)
+                    elif not item.is_dir():
+                        # It's a special file (device, pipe, socket, etc.)
+                        self.ignored_special_files += 1
         except OSError as e:
             print(f"Error scanning directory {directory_path}: {e}")
 
@@ -458,6 +472,7 @@ class FileIndexer:
         )
 
         self.ignored_symlinks = 0
+        self.ignored_special_files = 0
         self.skipped_checksums = 0
 
         # Process files in batches to manage memory usage
@@ -497,6 +512,10 @@ class FileIndexer:
 
         if self.ignored_symlinks > 0:
             print(f"Ignored {self.ignored_symlinks} symbolic links")
+        if self.ignored_special_files > 0:
+            print(
+                f"Ignored {self.ignored_special_files} special files (device files, pipes, sockets, etc.)"
+            )
 
         if self.skipped_checksums > 0:
             print(
@@ -814,6 +833,7 @@ class FileIndexer:
         stats["checksum_reuses"] = self.checksum_reuses
         stats["skipped_files"] = self.skipped_files
         stats["ignored_symlinks"] = self.ignored_symlinks
+        stats["ignored_special_files"] = self.ignored_special_files
         stats["skipped_checksums"] = self.skipped_checksums
         stats["permission_errors"] = self.permission_errors
 
@@ -833,6 +853,7 @@ class FileIndexer:
         self.checksum_reuses = 0
         self.skipped_files = 0
         self.ignored_symlinks = 0
+        self.ignored_special_files = 0
         self.skipped_checksums = 0
         self.permission_errors = 0
 
