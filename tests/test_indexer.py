@@ -1237,6 +1237,87 @@ class TestFileIndexer:
         assert 'empty.txt' in remaining_filenames
         assert 'test1.txt' not in remaining_filenames
 
+    def test_cleanup_optimization_directory_first(self):
+        """Test that cleanup optimization works correctly when entire directories are deleted."""
+        # Create additional nested directory structure for testing
+        nested_dir = Path(self.test_files_dir) / "nested"
+        nested_dir.mkdir()
+        nested_file1 = nested_dir / "nested1.txt"
+        nested_file2 = nested_dir / "nested2.txt"
+        nested_file1.write_text("Nested content 1")
+        nested_file2.write_text("Nested content 2")
+        
+        # Create another subdirectory
+        another_dir = Path(self.test_files_dir) / "another"
+        another_dir.mkdir()
+        another_file = another_dir / "another.txt"
+        another_file.write_text("Another content")
+        
+        # Index all files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        initial_stats = self.indexer.get_stats()
+        assert initial_stats["total_files"] == 8  # 5 original + 3 new files
+        
+        # Delete entire nested directory
+        import shutil
+        shutil.rmtree(nested_dir)
+        
+        # Run cleanup and verify optimization benefits
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # Verify results
+        assert cleanup_result['deleted_files'] == 2  # 2 files in nested directory
+        assert cleanup_result['deleted_directories'] == 1  # 1 deleted directory
+        assert cleanup_result['files_deleted_by_directory'] == 2  # Both files deleted via directory check
+        assert cleanup_result['files_deleted_individually'] == 0  # No individual file checks needed
+        
+        # Verify optimization saved filesystem calls
+        assert cleanup_result.get('filesystem_calls_saved', 0) > 0
+        
+        # Database should have 6 files now (8 - 2 deleted)
+        after_cleanup_stats = self.indexer.get_stats()
+        assert after_cleanup_stats["total_files"] == 6
+        
+        # Verify specific files are removed
+        remaining_files = self.indexer.search_files()
+        remaining_paths = [Path(f['path']) / f['filename'] for f in remaining_files]
+        assert nested_file1 not in remaining_paths
+        assert nested_file2 not in remaining_paths
+        assert another_file in remaining_paths  # Other files should remain
+
+    def test_cleanup_mixed_deletion_scenario(self):
+        """Test cleanup with mixed scenario: some directories deleted, some individual files deleted."""
+        # Create nested structure
+        nested_dir = Path(self.test_files_dir) / "nested"
+        nested_dir.mkdir()
+        nested_file = nested_dir / "nested.txt"
+        nested_file.write_text("Nested content")
+        
+        # Index all files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        initial_stats = self.indexer.get_stats()
+        assert initial_stats["total_files"] == 6  # 5 original + 1 nested
+        
+        # Delete entire nested directory
+        import shutil
+        shutil.rmtree(nested_dir)
+        
+        # Delete individual file from main directory
+        self.test_file1.unlink()
+        
+        # Run cleanup
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # Verify mixed deletion handling
+        assert cleanup_result['deleted_files'] == 2  # 1 from directory + 1 individual
+        assert cleanup_result['deleted_directories'] == 1  # 1 deleted directory
+        assert cleanup_result['files_deleted_by_directory'] == 1  # 1 file deleted via directory
+        assert cleanup_result['files_deleted_individually'] == 1  # 1 file deleted individually
+        
+        # Database should have 4 files now (6 - 2 deleted)
+        after_cleanup_stats = self.indexer.get_stats()
+        assert after_cleanup_stats["total_files"] == 4
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -909,6 +909,7 @@ class FileIndexer:
     def cleanup_deleted_files(self, batch_size: int = 1000, dry_run: bool = False) -> dict:
         """
         Check for deleted files and directories, and clean up the database.
+        Optimized to check directories first to reduce filesystem calls.
         
         Args:
             batch_size: Number of files to check in each batch
@@ -924,7 +925,7 @@ class FileIndexer:
         # Reset deleted files counter
         self.deleted_files = 0
         
-        # Get all files from database
+        # Get all files from database grouped by directory
         print("Retrieving all files from database...")
         all_files_query = """
         SELECT path, filename, file_size, indexed_at
@@ -946,56 +947,148 @@ class FileIndexer:
                 "dry_run": dry_run
             }
         
+        # Group files by directory for efficient checking
+        print("Grouping files by directory for optimization...")
+        files_by_directory = {}
+        for path, filename, file_size, indexed_at in all_files:
+            if path not in files_by_directory:
+                files_by_directory[path] = []
+            files_by_directory[path].append((filename, file_size, indexed_at))
+        
+        print(f"Found {len(files_by_directory):,} unique directories")
+        
         # Track statistics
         deleted_files = []
         deleted_directories = set()
         permission_errors = 0
         checked_files = 0
+        checked_directories = 0
+        files_deleted_by_directory = 0  # Files deleted because their directory was deleted
+        files_deleted_individually = 0  # Files deleted after individual checks
         
-        # Process files in batches
-        for i in range(0, len(all_files), batch_size):
-            batch = all_files[i:i + batch_size]
-            batch_deleted = []
+        # Phase 1: Check directories first
+        print("Phase 1: Checking directories...")
+        directories_to_process_individually = {}
+        
+        for directory_path, files_in_dir in files_by_directory.items():
+            checked_directories += 1
             
-            for path, filename, file_size, indexed_at in batch:
-                checked_files += 1
-                full_path = Path(path) / filename
+            try:
+                path_obj = Path(directory_path)
                 
-                try:
-                    # Check if file exists
-                    if not full_path.exists():
+                # Check if directory exists
+                if not path_obj.exists():
+                    # Entire directory is gone - mark all files as deleted
+                    deleted_directories.add(directory_path)
+                    for filename, file_size, indexed_at in files_in_dir:
+                        deleted_files.append((directory_path, filename))
+                        files_deleted_by_directory += 1
+                        checked_files += 1
+                else:
+                    # Directory exists - need to check individual files
+                    directories_to_process_individually[directory_path] = files_in_dir
+                
+                # Progress reporting
+                if checked_directories % 100 == 0:
+                    print(f"  Checked {checked_directories:,}/{len(files_by_directory):,} directories...")
+                    
+            except PermissionError:
+                permission_errors += 1
+                print(f"Permission denied checking directory: {directory_path}")
+                # Still need to check individual files in this case
+                directories_to_process_individually[directory_path] = files_in_dir
+            except OSError as e:
+                print(f"Error checking directory {directory_path}: {e}")
+                # Treat as deleted directory
+                deleted_directories.add(directory_path)
+                for filename, file_size, indexed_at in files_in_dir:
+                    deleted_files.append((directory_path, filename))
+                    files_deleted_by_directory += 1
+                    checked_files += 1
+        
+        print(f"Phase 1 completed: {len(deleted_directories):,} directories deleted entirely")
+        print(f"  Files marked as deleted due to directory deletion: {files_deleted_by_directory:,}")
+        print(f"  Directories needing individual file checks: {len(directories_to_process_individually):,}")
+        
+        # Phase 2: Check individual files in remaining directories
+        if directories_to_process_individually:
+            print("Phase 2: Checking individual files in existing directories...")
+            
+            # Process remaining files in batches
+            remaining_files = []
+            for directory_path, files_in_dir in directories_to_process_individually.items():
+                for filename, file_size, indexed_at in files_in_dir:
+                    remaining_files.append((directory_path, filename, file_size, indexed_at))
+            
+            for i in range(0, len(remaining_files), batch_size):
+                batch = remaining_files[i:i + batch_size]
+                batch_deleted = []
+                
+                for path, filename, file_size, indexed_at in batch:
+                    checked_files += 1
+                    full_path = Path(path) / filename
+                    
+                    try:
+                        # Check if individual file exists
+                        if not full_path.exists():
+                            deleted_files.append((path, filename))
+                            batch_deleted.append((path, filename))
+                            files_deleted_individually += 1
+                        
+                        # Progress reporting
+                        if checked_files % 5000 == 0:
+                            print(f"  Checked {checked_files:,}/{total_db_files:,} files...")
+                            
+                    except PermissionError:
+                        permission_errors += 1
+                        print(f"Permission denied checking: {full_path}")
+                    except OSError as e:
+                        # Other filesystem errors - treat as missing file
+                        print(f"Error checking file {full_path}: {e}")
                         deleted_files.append((path, filename))
                         batch_deleted.append((path, filename))
-                        
-                        # Track directory for potential cleanup
-                        if not Path(path).exists():
-                            deleted_directories.add(path)
-                    
-                    # Progress reporting
-                    if checked_files % 5000 == 0:
-                        print(f"Checked {checked_files:,}/{total_db_files:,} files...")
-                        
-                except PermissionError:
-                    permission_errors += 1
-                    print(f"Permission denied checking: {full_path}")
-                except OSError as e:
-                    # Other filesystem errors - treat as missing file
-                    print(f"Error checking file {full_path}: {e}")
-                    deleted_files.append((path, filename))
-                    batch_deleted.append((path, filename))
+                        files_deleted_individually += 1
+                
+                # Delete this batch from database if not dry run
+                if batch_deleted and not dry_run:
+                    self._delete_files_from_database(batch_deleted)
             
-            # Delete this batch from database if not dry run
-            if batch_deleted and not dry_run:
-                self._delete_files_from_database(batch_deleted)
+            print(f"Phase 2 completed: {files_deleted_individually:,} individual files deleted")
+        
+        # Delete files from directories that were entirely deleted (if not already done in batches)
+        if deleted_directories and not dry_run:
+            directory_files_to_delete = []
+            for directory_path in deleted_directories:
+                for filename, _, _ in files_by_directory[directory_path]:
+                    directory_files_to_delete.append((directory_path, filename))
+            
+            if directory_files_to_delete:
+                # Process in batches to avoid overwhelming the database
+                for i in range(0, len(directory_files_to_delete), batch_size):
+                    batch = directory_files_to_delete[i:i + batch_size]
+                    self._delete_files_from_database(batch)
         
         # Report results
         print(f"\nCleanup scan completed:")
+        print(f"  Directories checked: {checked_directories:,}")
         print(f"  Files checked: {checked_files:,}")
         print(f"  Files found to be deleted: {len(deleted_files):,}")
+        print(f"    - Deleted due to directory deletion: {files_deleted_by_directory:,}")
+        print(f"    - Deleted individually: {files_deleted_individually:,}")
         print(f"  Directories no longer existing: {len(deleted_directories):,}")
         
         if permission_errors > 0:
             print(f"  Permission errors: {permission_errors:,}")
+        
+        # Performance benefit reporting
+        # Without optimization, we would check every file individually
+        # With optimization, we check directories first and skip individual file checks for deleted directories
+        total_potential_checks = total_db_files  # Would check each file individually
+        actual_checks = checked_files + checked_directories  # What we actually checked
+        saved_checks = files_deleted_by_directory  # Files we didn't need to check individually
+        if saved_checks > 0:
+            savings_pct = (saved_checks / total_potential_checks) * 100
+            print(f"  Optimization: Saved {saved_checks:,} filesystem calls ({savings_pct:.1f}% reduction)")
         
         if deleted_files:
             print(f"\nSample of deleted files:")
@@ -1024,6 +1117,9 @@ class FileIndexer:
             "deleted_files": len(deleted_files),
             "deleted_directories": len(deleted_directories),
             "permission_errors": permission_errors,
+            "files_deleted_by_directory": files_deleted_by_directory,
+            "files_deleted_individually": files_deleted_individually,
+            "filesystem_calls_saved": saved_checks if saved_checks > 0 else 0,
             "dry_run": dry_run
         }
     

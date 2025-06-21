@@ -237,7 +237,12 @@ def main() -> None:
             print(f"\nCleanup Summary:")
             print(f"  Files checked: {cleanup_result['total_checked']:,}")
             print(f"  Deleted files found: {cleanup_result['deleted_files']:,}")
+            if cleanup_result['deleted_files'] > 0:
+                print(f"    - Deleted due to directory deletion: {cleanup_result['files_deleted_by_directory']:,}")
+                print(f"    - Deleted individually: {cleanup_result['files_deleted_individually']:,}")
             print(f"  Deleted directories: {cleanup_result['deleted_directories']:,}")
+            if cleanup_result.get('filesystem_calls_saved', 0) > 0:
+                print(f"  Filesystem calls saved: {cleanup_result['filesystem_calls_saved']:,}")
             if cleanup_result['permission_errors'] > 0:
                 print(f"  Permission errors: {cleanup_result['permission_errors']:,}")
             if cleanup_result['dry_run']:
