@@ -160,6 +160,50 @@ class FileIndexer:
         except Exception as e:
             print(f"Schema migration failed (this is normal for new databases): {e}")
 
+    def _should_process_file(self, file_path: str | Path, check_empty_files: bool = False) -> bool:
+        """
+        Shared helper function to determine if a file should be processed.
+        Handles symlinks, special files, and optionally empty files.
+        Updates appropriate counters.
+
+        Args:
+            file_path: Path to the file to check
+            check_empty_files: Whether to also check for empty files (respects skip_empty_files setting)
+
+        Returns:
+            True if the file should be processed, False otherwise
+        """
+        try:
+            path_obj = Path(file_path)
+
+            # Skip symbolic links
+            if path_obj.is_symlink():
+                self.ignored_symlinks += 1
+                return False
+
+            # Skip special files (device files, pipes, sockets, etc.)
+            # Only process regular files
+            if not path_obj.is_file():
+                self.ignored_special_files += 1
+                return False
+
+            # Skip empty files if requested and skip_empty_files is True
+            if check_empty_files and self.skip_empty_files:
+                try:
+                    file_size = path_obj.stat().st_size
+                    if file_size == 0:
+                        self.skipped_checksums += 1
+                        return False
+                except (OSError, PermissionError):
+                    # If we can't get file size, let it through and handle later
+                    pass
+
+            return True
+
+        except (OSError, PermissionError):
+            # If we can't check the file, assume it's not processable
+            return False
+
     def _should_calculate_checksum(self, file_size: int) -> bool:
         """
         Determine if we should calculate checksum for a file based on size.
@@ -212,29 +256,15 @@ class FileIndexer:
                 for root, _dirs, filenames in os.walk(directory_path):
                     for filename in filenames:
                         file_path = Path(root) / filename
-
-                        # Skip symbolic links
-                        if file_path.is_symlink():
-                            self.ignored_symlinks += 1
-                            continue
-
-                        # Skip special files (device files, pipes, sockets, etc.)
-                        # Only process regular files
-                        if not file_path.is_file():
-                            self.ignored_special_files += 1
-                            continue
-
-                        yield str(file_path)
+                        
+                        # Use shared helper function
+                        if self._should_process_file(file_path):
+                            yield str(file_path)
             else:
                 for item in Path(directory_path).iterdir():
-                    if item.is_symlink():
-                        self.ignored_symlinks += 1
-                        continue
-                    elif item.is_file():
+                    # Use shared helper function  
+                    if self._should_process_file(item):
                         yield str(item)
-                    elif not item.is_dir():
-                        # It's a special file (device, pipe, socket, etc.)
-                        self.ignored_special_files += 1
         except OSError as e:
             print(f"Error scanning directory {directory_path}: {e}")
 
@@ -482,6 +512,7 @@ class FileIndexer:
             f"Configuration: max_checksum_size={self.max_checksum_size:,} bytes, skip_empty_files={self.skip_empty_files}"
         )
 
+        # Reset only per-scan counters (not cumulative performance counters)
         self.ignored_symlinks = 0
         self.ignored_special_files = 0
         self.skipped_checksums = 0
@@ -983,7 +1014,7 @@ class FileIndexer:
             f"Phase 2 completed: Processed {total_processed} files, updated {total_updated} with checksums"
         )
 
-        # Report filtered files during checksum calculation
+        # Move all summary reporting to the end for better organization
         if self.ignored_symlinks > 0:
             print(
                 f"Ignored {self.ignored_symlinks} symbolic links during checksum calculation"
@@ -1021,38 +1052,9 @@ class FileIndexer:
         # Filter out symlinks, special files, and empty files before checksum calculation
         valid_file_paths = []
         for file_path in file_paths:
-            try:
-                path_obj = Path(file_path)
-
-                # Skip symbolic links
-                if path_obj.is_symlink():
-                    self.ignored_symlinks += 1
-                    continue
-
-                # Skip special files (device files, pipes, sockets, etc.)
-                # Only process regular files
-                if not path_obj.is_file():
-                    self.ignored_special_files += 1
-                    continue
-
-                # Skip empty files if skip_empty_files is True
-                if self.skip_empty_files:
-                    try:
-                        file_size = path_obj.stat().st_size
-                        if file_size == 0:
-                            self.skipped_checksums += 1
-                            continue
-                    except (OSError, PermissionError):
-                        # If we can't get file size, let it through and handle later
-                        pass
-
+            # Use shared helper function with empty file checking
+            if self._should_process_file(file_path, check_empty_files=True):
                 valid_file_paths.append(file_path)
-
-            except (OSError, PermissionError):
-                # If we can't check the file type, skip it
-                # This will be caught later during checksum calculation
-                valid_file_paths.append(file_path)
-                continue
 
         if not valid_file_paths:
             return 0
@@ -1154,19 +1156,11 @@ class FileIndexer:
         Filters out symlinks and special files.
         """
         try:
+            # Use shared helper function
+            if not self._should_process_file(file_path):
+                return None
+
             path_obj = Path(file_path)
-
-            # Skip symbolic links
-            if path_obj.is_symlink():
-                self.ignored_symlinks += 1
-                return None
-
-            # Skip special files (device files, pipes, sockets, etc.)
-            # Only process regular files
-            if not path_obj.is_file():
-                self.ignored_special_files += 1
-                return None
-
             stat_info = path_obj.stat()
 
             directory = str(path_obj.parent)
