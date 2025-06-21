@@ -66,6 +66,34 @@ def main():
         print(f"  Files without checksums: {stats['files_without_checksum']:,}")
         print(f"  Duplicate files: {stats['duplicate_files']:,}")
 
+        # Example 5: Database cleanup
+        print("\n=== Example 5: Database Cleanup ===")
+
+        # Check for deleted files (dry run first)
+        print("Checking for deleted files (dry run)...")
+        cleanup_result = indexer.cleanup_deleted_files(dry_run=True)
+        print(f"Files checked: {cleanup_result['total_checked']:,}")
+        print(f"Deleted files found: {cleanup_result['deleted_files']:,}")
+
+        # Actually clean up deleted files if any found
+        if cleanup_result["deleted_files"] > 0:
+            print("\nCleaning up deleted files...")
+            cleanup_result = indexer.cleanup_deleted_files(dry_run=False)
+            print(f"Cleaned up {cleanup_result['deleted_files']:,} deleted files")
+
+        # Check for empty directories
+        print("\nChecking for empty directories...")
+        empty_dirs_result = indexer.cleanup_empty_directories(dry_run=True)
+        print(f"Empty directories found: {empty_dirs_result['empty_directories']:,}")
+
+        # Clean up empty directories if any found
+        if empty_dirs_result["empty_directories"] > 0:
+            print("Cleaning up empty directories...")
+            empty_dirs_result = indexer.cleanup_empty_directories(dry_run=False)
+            print(
+                f"Cleaned up {empty_dirs_result['files_in_empty_dirs']:,} files from {empty_dirs_result['empty_directories']:,} empty directories"
+            )
+
     except Exception as e:
         print(f"Error: {e}")
 
