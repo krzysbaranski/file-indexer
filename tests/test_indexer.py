@@ -310,6 +310,54 @@ class TestFileIndexer:
         stats = self.indexer.get_stats()
         assert stats["skipped_files"] == 0
 
+    def test_ignore_symbolic_links(self):
+        """Test that symbolic links are ignored during scanning and indexing."""
+        import os
+        
+        # Create a test file and a symbolic link to it
+        test_file = os.path.join(self.test_files_dir, "real_file.txt")
+        symlink_file = os.path.join(self.test_files_dir, "symlink_file.txt")
+        
+        with open(test_file, "w") as f:
+            f.write("Real file content")
+        
+        # Create symbolic link (skip test if symlinks not supported on platform)
+        try:
+            os.symlink(test_file, symlink_file)
+        except (OSError, NotImplementedError):
+            # Symlinks not supported on this platform, skip test
+            import pytest
+            pytest.skip("Symbolic links not supported on this platform")
+        
+        # Reset counters
+        self.indexer.reset_optimization_counters()
+        
+        # Scan directory - should find real file but ignore symlink
+        files = self.indexer.scan_directory(self.test_files_dir, recursive=False)
+        
+        # Should find the original 3 test files + 1 new real file = 4 total
+        # But should NOT include the symlink
+        assert len(files) == 4
+        assert test_file in files
+        assert symlink_file not in files
+        
+        # Check that symlink was tracked as ignored
+        assert self.indexer.ignored_symlinks == 1
+        
+        # Index the directory
+        self.indexer.update_database(self.test_files_dir, recursive=False)
+        
+        # Check stats include ignored symlinks
+        stats = self.indexer.get_stats()
+        assert stats["ignored_symlinks"] == 1
+        assert "ignored_symlinks" in stats  # Ensure key exists
+        
+        # Database should only contain 4 files (not the symlink)
+        assert stats["total_files"] == 4
+        
+        # Clean up the symlink
+        os.unlink(symlink_file)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

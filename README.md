@@ -221,7 +221,7 @@ indexer.close()
 ## File Handling
 
 - **Permissions**: Files that can't be read due to permissions are skipped with a warning.
-- **Symbolic Links**: The system follows symbolic links and indexes the target files.
+- **Symbolic Links**: Symbolic links are ignored and not indexed to avoid potential issues with broken links and circular references.
 - **Hidden Files**: Hidden files (starting with '.') are included in the index.
 - **Binary Files**: All file types are supported, including binary files.
 

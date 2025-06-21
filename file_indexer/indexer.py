@@ -26,6 +26,7 @@ class FileIndexer:
         self.checksum_calculations = 0
         self.checksum_reuses = 0
         self.skipped_files = 0
+        self.ignored_symlinks = 0
 
     def _create_table(self) -> None:
         """Create the files table if it doesn't exist."""
@@ -115,14 +116,14 @@ class FileIndexer:
 
     def scan_directory(self, directory_path: str, recursive: bool = True) -> list[str]:
         """
-        Scan directory for all files.
+        Scan directory for all files, ignoring symbolic links.
 
         Args:
             directory_path: Path to directory to scan
             recursive: Whether to scan subdirectories recursively
 
         Returns:
-            List of file paths
+            List of file paths (excluding symbolic links)
         """
         files: list[str] = []
 
@@ -138,11 +139,17 @@ class FileIndexer:
             if recursive:
                 for root, _dirs, filenames in os.walk(directory_path):
                     for filename in filenames:
-                        files.append(str(Path(root) / filename))
+                        file_path = Path(root) / filename
+                        if file_path.is_symlink():
+                            self.ignored_symlinks += 1
+                            continue
+                        files.append(str(file_path))
             else:
                 for item in Path(directory_path).iterdir():
-                    if item.is_file():
+                    if item.is_file() and not item.is_symlink():
                         files.append(str(item))
+                    elif item.is_symlink():
+                        self.ignored_symlinks += 1
         except OSError as e:
             print(f"Error scanning directory {directory_path}: {e}")
 
@@ -158,6 +165,8 @@ class FileIndexer:
             recursive: Whether to scan subdirectories recursively
         """
         print(f"Scanning directory: {directory_path}")
+        # Reset symlink counter for this update operation
+        self.ignored_symlinks = 0
         files = self.scan_directory(directory_path, recursive)
 
         if not files:
@@ -249,6 +258,10 @@ class FileIndexer:
         print(
             f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Skipped: {self.skipped_files}, Errors: {errors}"
         )
+        
+        # Show symlinks ignored
+        if self.ignored_symlinks > 0:
+            print(f"Ignored {self.ignored_symlinks} symbolic links")
         
         # Show optimization benefits
         total_checksum_ops = self.checksum_calculations + self.checksum_reuses
@@ -376,6 +389,7 @@ class FileIndexer:
         stats["checksum_calculations"] = self.checksum_calculations
         stats["checksum_reuses"] = self.checksum_reuses
         stats["skipped_files"] = self.skipped_files
+        stats["ignored_symlinks"] = self.ignored_symlinks
         total_operations = self.checksum_calculations + self.checksum_reuses
         if total_operations > 0:
             stats["optimization_percentage"] = round(
@@ -391,6 +405,7 @@ class FileIndexer:
         self.checksum_calculations = 0
         self.checksum_reuses = 0
         self.skipped_files = 0
+        self.ignored_symlinks = 0
 
     def close(self) -> None:
         """Close the database connection."""
