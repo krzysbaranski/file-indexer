@@ -89,7 +89,8 @@ indexer = FileIndexer(
     db_path="my_index.db",
     max_workers=8,
     max_checksum_size=100 * 1024 * 1024,  # 100MB
-    skip_empty_files=True
+    skip_empty_files=True,
+    use_parallel_processing=True  # Set to False for sequential processing
 )
 
 # Traditional indexing
@@ -135,6 +136,7 @@ For a dataset with 100,000 files where only 5% are potential duplicates:
 - `--max-checksum-size`: Maximum file size for checksum calculation (default: 100MB)
 - `--batch-size`: Files processed per batch (default: 1000)
 - `--max-workers`: Parallel worker processes (default: CPU count + 4)
+- `--sequential`: Force sequential processing instead of parallel (useful for restricted systems)
 - `--no-skip-empty`: Calculate checksums for empty files (default: skip)
 - `--no-recursive`: Don't scan subdirectories (default: recursive)
 
@@ -165,6 +167,25 @@ See `examples/example_usage.py` for comprehensive usage examples.
 3. **Set appropriate checksum size limits** for your use case
 4. **Use parallel processing** with `--max-workers`
 5. **Run Phase 2 separately** for operational flexibility
+6. **Use sequential processing** (`--sequential` or `--max-workers 1`) on systems with multiprocessing restrictions
+
+## Troubleshooting
+
+### Permission Denied Errors with Parallel Processing
+
+If you encounter permission errors like `PermissionError: [Errno 13] Permission denied` when using parallel processing (common on NAS systems or containers), you have several options:
+
+1. **Use the `--sequential` flag** to force sequential processing:
+   ```bash
+   file-indexer --sequential --calculate-duplicates --db my_index.db
+   ```
+
+2. **Set `--max-workers 1`** (automatically uses sequential processing):
+   ```bash
+   file-indexer --max-workers 1 --calculate-duplicates --db my_index.db
+   ```
+
+3. **Let it auto-fallback** - the tool will automatically fall back to sequential processing if parallel processing fails
 
 ## License
 
