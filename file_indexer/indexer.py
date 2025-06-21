@@ -613,7 +613,7 @@ class FileIndexer:
                 else:
                     checksum = None  # Explicitly set to NULL for large/empty files
 
-                insert_data.append((directory, filename, checksum, mod_time, file_size))
+                insert_data.append((directory, filename, checksum, mod_time.isoformat(), file_size))
 
             for (
                 file_path,
@@ -630,7 +630,7 @@ class FileIndexer:
                 else:
                     checksum = None  # Explicitly set to NULL for large/empty files
 
-                update_data.append((checksum, mod_time, file_size, directory, filename))
+                update_data.append((checksum, mod_time.isoformat(), file_size, directory, filename))
 
             # Perform bulk database operations
             added, updated = self._bulk_database_operations(insert_data, update_data)
@@ -702,7 +702,7 @@ class FileIndexer:
                         """,
                             [
                                 checksum,
-                                modification_datetime,
+                                modification_datetime.isoformat(),
                                 file_size,
                                 directory,
                                 filename,
@@ -723,7 +723,7 @@ class FileIndexer:
                             directory,
                             filename,
                             checksum,
-                            modification_datetime,
+                            modification_datetime.isoformat(),
                             file_size,
                         ],
                     )
