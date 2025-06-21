@@ -54,11 +54,12 @@ jobs:
       run: poetry run mypy file_indexer/
     
     - name: Run tests
-      run: poetry run pytest tests/ -v --cov=file_indexer --cov-report=xml
+      run: poetry run pytest tests/ -v --cov=file_indexer --cov-branch --cov-report=xml
     
-    - name: Upload coverage to Codecov
+    - name: Upload coverage reports to Codecov
       if: matrix.python-version == '3.12'
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v5
       with:
-        file: ./coverage.xml
-        fail_ci_if_error: false 
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+        verbose: true
