@@ -518,6 +518,8 @@ class FileIndexer:
         self.ignored_symlinks = 0
         self.ignored_special_files = 0
         self.skipped_checksums = 0
+        self.skipped_files = 0
+        self.permission_errors = 0
 
         # Process files in batches to manage memory usage
         file_generator = self.scan_directory_generator(directory_path, recursive)
