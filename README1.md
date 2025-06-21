@@ -218,10 +218,28 @@ indexer.close()
 - **Database Indexes**: The system creates indexes on frequently queried columns for better performance.
 - **Memory Usage**: Files are read in 8KB chunks to minimize memory usage for large files.
 
+## Limitations
+
+### File Deletion Detection
+
+**Important**: The file indexer does **not** automatically detect or handle file deletions from the filesystem. If files are deleted from the directory after being indexed in the database, they will remain in the database as stale entries.
+
+**Recommended Solution**: If you suspect that files have been deleted since the last database update, it is recommended to recreate the database from scratch rather than trying to manually sync deletions:
+
+```bash
+# Remove the existing database file
+rm file_index.db
+
+# Re-index the directory to create a fresh database
+file-indexer --scan /path/to/directory
+```
+
+This limitation exists because detecting deletions would require scanning both the filesystem and the database on every update, which would significantly impact performance for large file sets.
+
 ## File Handling
 
 - **Permissions**: Files that can't be read due to permissions are skipped with a warning.
-- **Symbolic Links**: Symbolic links are ignored and not indexed to avoid potential issues with broken links and circular references.
+- **Symbolic Links**: The system follows symbolic links and indexes the target files.
 - **Hidden Files**: Hidden files (starting with '.') are included in the index.
 - **Binary Files**: All file types are supported, including binary files.
 
@@ -252,7 +270,7 @@ indexer.close()
 1. Clone the repository and install development dependencies:
 ```bash
 git clone <repository-url>
-cd file-indexer
+cd file-index
 poetry install
 ```
 
@@ -261,37 +279,23 @@ poetry install
 poetry shell
 ```
 
-3. (Optional) Set up pre-commit hooks for automatic code quality checks:
-```bash
-poetry run pre-commit install
-```
-
 ### Code Quality Tools
 
-The project uses modern Python development tools:
+The project includes several development tools:
 
 ```bash
-# Lint and format code with ruff
-poetry run ruff check .
-poetry run ruff format .
+# Format code with Black
+poetry run black file_indexer/ examples/ tests/
 
-# Type checking with mypy
-poetry run mypy file_indexer/
+# Sort imports with isort
+poetry run isort file_indexer/ examples/ tests/
 
-# Run tests with coverage
-poetry run pytest --cov=file_indexer
+# Lint code with flake8
+poetry run flake8 file_indexer/ examples/ tests/
 
-# Run all pre-commit hooks manually
-poetry run pre-commit run --all-files
+# Run tests
+poetry run pytest
 ```
-
-### Continuous Integration
-
-The project includes GitHub Actions workflows that automatically:
-- Run ruff linting and formatting checks
-- Perform mypy type checking  
-- Execute the test suite with coverage reporting
-- Test against multiple Python versions (3.12, 3.13)
 
 ### Running Tests
 
@@ -300,10 +304,7 @@ The project includes GitHub Actions workflows that automatically:
 poetry run pytest
 
 # Run tests with coverage
-poetry run pytest --cov=file_indexer --cov-report=html
-
-# Run specific test file
-poetry run pytest tests/test_indexer.py -v
+poetry run pytest --cov=file_indexer
 ```
 
 ## Contributing
