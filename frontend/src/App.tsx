@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import SearchFiles from './components/SearchFiles';
 import { Duplicates } from './components/Duplicates';
+import { Analytics } from './components/Analytics';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,6 +25,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="search" element={<SearchFiles />} />
             <Route path="duplicates" element={<Duplicates />} />
+            <Route path="analytics" element={<Analytics />} />
           </Route>
         </Routes>
       </Router>

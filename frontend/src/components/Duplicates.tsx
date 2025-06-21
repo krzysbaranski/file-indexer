@@ -1,16 +1,42 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { FileIndexerAPI } from '../lib/api';
 import type { DuplicateGroup } from '../types/api';
 import { formatFileSize, formatDate, getFileTypeIcon } from '../lib/utils';
-import { Search, AlertTriangle, Copy, Trash2, Folder, ChevronDown, ChevronUp } from 'lucide-react';
+import { 
+  Search, 
+  AlertTriangle, 
+  Copy, 
+  Trash2, 
+  Folder, 
+  ChevronDown, 
+  ChevronUp, 
+  Filter,
+  ChevronLeft,
+  ChevronRight,
+  Settings,
+  FileText,
+  HardDrive,
+  ClipboardCopy,
+  Eye
+} from 'lucide-react';
 
 export const Duplicates: React.FC = () => {
   const [duplicates, setDuplicates] = useState<DuplicateGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  
+  // Filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [minGroupSize, setMinGroupSize] = useState(2);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [minFileSize, setMinFileSize] = useState(5 * 1024 * 1024); // Default 5MB
+  const [maxFileSize, setMaxFileSize] = useState<number | null>(null);
+  const [fileTypeFilter, setFileTypeFilter] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
 
   useEffect(() => {
     loadDuplicates();
@@ -30,12 +56,43 @@ export const Duplicates: React.FC = () => {
     }
   };
 
-  const filteredDuplicates = duplicates.filter(group =>
-    group.files.some(file => 
-      file.filename.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      file.path.toLowerCase().includes(searchTerm.toLowerCase())
-    )
-  );
+  // Advanced filtering logic
+  const filteredDuplicates = useMemo(() => {
+    return duplicates.filter(group => {
+      // Size filter
+      const fileSize = group.files[0]?.file_size || 0;
+      if (fileSize < minFileSize) return false;
+      if (maxFileSize && fileSize > maxFileSize) return false;
+
+      // Search term filter
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        const hasMatch = group.files.some(file => 
+          file.filename.toLowerCase().includes(searchLower) ||
+          file.path.toLowerCase().includes(searchLower)
+        );
+        if (!hasMatch) return false;
+      }
+
+      // File type filter
+      if (fileTypeFilter) {
+        const hasTypeMatch = group.files.some(file => {
+          const extension = file.filename.split('.').pop()?.toLowerCase() || '';
+          return extension.includes(fileTypeFilter.toLowerCase());
+        });
+        if (!hasTypeMatch) return false;
+      }
+
+      return true;
+    });
+  }, [duplicates, minFileSize, maxFileSize, searchTerm, fileTypeFilter]);
+
+  // Pagination logic
+  const totalPages = Math.ceil(filteredDuplicates.length / itemsPerPage);
+  const paginatedDuplicates = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredDuplicates.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredDuplicates, currentPage, itemsPerPage]);
 
   const toggleGroup = (checksum: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -48,19 +105,49 @@ export const Duplicates: React.FC = () => {
   };
 
   const calculateWastedSpace = () => {
-    return duplicates.reduce((total, group) => {
+    return filteredDuplicates.reduce((total, group) => {
       const fileSize = group.files[0]?.file_size || 0;
       return total + (fileSize * (group.files.length - 1));
     }, 0);
   };
 
-  const totalDuplicateFiles = duplicates.reduce((sum, group) => sum + group.files.length, 0);
+  const totalDuplicateFiles = filteredDuplicates.reduce((sum, group) => sum + group.files.length, 0);
   const wastedSpace = calculateWastedSpace();
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setMinFileSize(5 * 1024 * 1024);
+    setMaxFileSize(null);
+    setFileTypeFilter('');
+    setCurrentPage(1);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      // Could add a toast notification here
+    }).catch(err => {
+      console.error('Failed to copy:', err);
+    });
+  };
+
+  const formatSizeForInput = (bytes: number): string => {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return (bytes / (1024 * 1024 * 1024)).toFixed(1);
+    } else {
+      return (bytes / (1024 * 1024)).toFixed(1);
+    }
+  };
+
+  const parseSizeFromInput = (value: string, unit: string): number => {
+    const num = parseFloat(value);
+    if (isNaN(num)) return 0;
+    return unit === 'GB' ? num * 1024 * 1024 * 1024 : num * 1024 * 1024;
+  };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="animate-shimmer w-12 h-12 rounded-full"></div>
       </div>
     );
   }
@@ -69,7 +156,7 @@ export const Duplicates: React.FC = () => {
     return (
       <div className="text-center py-12">
         <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-        <p className="text-red-600 text-lg">{error}</p>
+        <p className="text-red-600 text-lg font-medium">{error}</p>
         <button
           onClick={loadDuplicates}
           className="btn btn-primary mt-4"
@@ -82,7 +169,7 @@ export const Duplicates: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Modern Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold gradient-text">Duplicate Files</h1>
@@ -90,156 +177,449 @@ export const Duplicates: React.FC = () => {
             Find and manage duplicate files to reclaim storage space
           </p>
         </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`btn ${showFilters ? 'btn-primary' : 'btn-secondary'} flex items-center space-x-2`}
+          >
+            <Filter className="h-4 w-4" />
+            <span>Filters</span>
+          </button>
+        </div>
       </div>
 
-      {/* Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="card bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
+      {/* Advanced Filters */}
+      {showFilters && (
+        <div className="card">
+          <div className="card-content space-y-4">
+            {/* Search and basic filters row */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Search Files</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                  <input
+                    type="text"
+                    placeholder="Search files..."
+                    value={searchTerm}
+                    onChange={(e) => {
+                      setSearchTerm(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="input pl-10 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">File Type</label>
+                <input
+                  type="text"
+                  placeholder="jpg, pdf, mp4..."
+                  value={fileTypeFilter}
+                  onChange={(e) => {
+                    setFileTypeFilter(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="input text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Min Group Size</label>
+                <select
+                  value={minGroupSize}
+                  onChange={(e) => setMinGroupSize(parseInt(e.target.value))}
+                  className="input text-sm"
+                >
+                  <option value={2}>2+ copies</option>
+                  <option value={3}>3+ copies</option>
+                  <option value={5}>5+ copies</option>
+                  <option value={10}>10+ copies</option>
+                  <option value={20}>20+ copies</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Per Page</label>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(parseInt(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="input text-sm"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Size filters row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Minimum File Size</label>
+                <div className="flex space-x-2">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    value={formatSizeForInput(minFileSize)}
+                    onChange={(e) => {
+                      const size = parseSizeFromInput(e.target.value, minFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB');
+                      setMinFileSize(size);
+                      setCurrentPage(1);
+                    }}
+                    className="input text-sm w-24"
+                  />
+                  <select
+                    value={minFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB'}
+                    onChange={(e) => {
+                      const currentValue = formatSizeForInput(minFileSize);
+                      const size = parseSizeFromInput(currentValue, e.target.value);
+                      setMinFileSize(size);
+                      setCurrentPage(1);
+                    }}
+                    className="input w-16 text-sm"
+                  >
+                    <option value="MB">MB</option>
+                    <option value="GB">GB</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Maximum File Size (Optional)</label>
+                <div className="flex space-x-2">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    placeholder="No limit"
+                    value={maxFileSize ? formatSizeForInput(maxFileSize) : ''}
+                    onChange={(e) => {
+                      if (!e.target.value) {
+                        setMaxFileSize(null);
+                      } else {
+                        const size = parseSizeFromInput(e.target.value, maxFileSize && maxFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB');
+                        setMaxFileSize(size);
+                      }
+                      setCurrentPage(1);
+                    }}
+                    className="input text-sm w-24"
+                  />
+                  <select
+                    value={maxFileSize && maxFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB'}
+                    onChange={(e) => {
+                      if (maxFileSize) {
+                        const currentValue = formatSizeForInput(maxFileSize);
+                        const size = parseSizeFromInput(currentValue, e.target.value);
+                        setMaxFileSize(size);
+                        setCurrentPage(1);
+                      }
+                    }}
+                    className="input w-16 text-sm"
+                  >
+                    <option value="MB">MB</option>
+                    <option value="GB">GB</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-end">
+                <button
+                  onClick={resetFilters}
+                  className="btn btn-secondary text-sm w-full"
+                >
+                  Reset Filters
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enhanced Statistics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="card">
           <div className="flex items-center">
-            <div className="p-3 rounded-full bg-orange-500 text-white">
+            <div className="p-3 rounded-full bg-gradient-to-r from-orange-500 to-red-500 text-white">
               <Copy className="h-6 w-6" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-orange-800">Duplicate Groups</p>
-              <p className="text-2xl font-bold text-orange-900">{filteredDuplicates.length.toLocaleString()}</p>
+              <p className="text-sm font-medium text-gray-600">Duplicate Groups</p>
+              <p className="text-2xl font-bold text-gray-900">{filteredDuplicates.length.toLocaleString()}</p>
             </div>
           </div>
         </div>
 
-        <div className="card bg-gradient-to-br from-red-50 to-red-100 border-red-200">
+        <div className="card">
           <div className="flex items-center">
-            <div className="p-3 rounded-full bg-red-500 text-white">
-              <Trash2 className="h-6 w-6" />
+            <div className="p-3 rounded-full bg-gradient-to-r from-red-500 to-pink-500 text-white">
+              <FileText className="h-6 w-6" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-red-800">Total Duplicates</p>
-              <p className="text-2xl font-bold text-red-900">{totalDuplicateFiles.toLocaleString()}</p>
+              <p className="text-sm font-medium text-gray-600">Total Files</p>
+              <p className="text-2xl font-bold text-gray-900">{totalDuplicateFiles.toLocaleString()}</p>
             </div>
           </div>
         </div>
 
-        <div className="card bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+        <div className="card">
           <div className="flex items-center">
-            <div className="p-3 rounded-full bg-purple-500 text-white">
-              <AlertTriangle className="h-6 w-6" />
+            <div className="p-3 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white">
+              <HardDrive className="h-6 w-6" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-purple-800">Wasted Space</p>
-              <p className="text-2xl font-bold text-purple-900">{formatFileSize(wastedSpace)}</p>
+              <p className="text-sm font-medium text-gray-600">Wasted Space</p>
+              <p className="text-2xl font-bold text-gray-900">{formatFileSize(wastedSpace)}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-gradient-to-r from-green-500 to-teal-500 text-white">
+              <Settings className="h-6 w-6" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">Showing</p>
+              <p className="text-2xl font-bold text-gray-900">{paginatedDuplicates.length}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="card">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <input
-                type="text"
-                placeholder="Search duplicate files..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="input pl-10"
-              />
-            </div>
+      
+
+      {/* Pagination Controls (Top) */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredDuplicates.length)} of {filteredDuplicates.length} results
           </div>
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700">Min Group Size:</label>
-            <select
-              value={minGroupSize}
-              onChange={(e) => setMinGroupSize(parseInt(e.target.value))}
-              className="input w-20"
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
             >
-              <option value={2}>2+</option>
-              <option value={3}>3+</option>
-              <option value={5}>5+</option>
-              <option value={10}>10+</option>
-            </select>
+              <ChevronLeft className="h-4 w-4" />
+              <span>Previous</span>
+            </button>
+            
+            <div className="flex items-center space-x-1">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                const page = currentPage <= 3 ? i + 1 : currentPage - 2 + i;
+                if (page <= totalPages) {
+                  return (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`btn ${page === currentPage ? 'btn-primary' : 'btn-secondary'} w-10 h-10 p-0`}
+                    >
+                      {page}
+                    </button>
+                  );
+                }
+                return null;
+              })}
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+            >
+              <span>Next</span>
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Duplicate Groups */}
       <div className="space-y-4">
-        {filteredDuplicates.length === 0 ? (
+        {paginatedDuplicates.length === 0 ? (
           <div className="text-center py-12">
             <Copy className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-500 text-lg">No duplicate files found</p>
             <p className="text-gray-400 text-sm mt-2">
-              {searchTerm ? 'Try adjusting your search terms' : 'Try lowering the minimum group size'}
+              Try adjusting your filters or search terms
             </p>
           </div>
         ) : (
-          filteredDuplicates.map((group) => {
+          paginatedDuplicates.map((group) => {
             const isExpanded = expandedGroups.has(group.checksum);
             const sampleFile = group.files[0];
-                         const wastedSpaceForGroup = sampleFile.file_size * (group.files.length - 1);
+            const wastedSpaceForGroup = sampleFile.file_size * (group.files.length - 1);
 
             return (
-              <div key={group.checksum} className="card border-l-4 border-l-orange-500">
-                <div
-                  className="flex items-center justify-between cursor-pointer"
-                  onClick={() => toggleGroup(group.checksum)}
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center text-orange-600">
-                      {getFileTypeIcon(sampleFile.filename)}
-                    </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h3 className="font-medium text-gray-900">{sampleFile.filename}</h3>
-                        <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs rounded-full">
-                          {group.files.length} copies
-                        </span>
+              <div key={group.checksum} className="card border-l-4 border-l-gradient-to-b from-orange-500 to-red-500">
+                <div className="p-6">
+                  {/* Header Row */}
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-4">
+                      <div className="text-2xl text-blue-600">
+                        {getFileTypeIcon(sampleFile.filename)}
                       </div>
-                                             <div className="flex items-center space-x-4 text-sm text-gray-500 mt-1">
-                         <span>{formatFileSize(sampleFile.file_size)}</span>
-                         <span>•</span>
-                         <span>Wasting {formatFileSize(wastedSpaceForGroup)}</span>
-                         <span>•</span>
-                         <span>Checksum: {group.checksum.slice(0, 8)}...</span>
-                       </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    {isExpanded ? (
-                      <ChevronUp className="h-5 w-5 text-gray-400" />
-                    ) : (
-                      <ChevronDown className="h-5 w-5 text-gray-400" />
-                    )}
-                  </div>
-                </div>
-
-                {isExpanded && (
-                  <div className="mt-4 space-y-2">
-                    {group.files.map((file, index) => (
-                      <div
-                        key={`${file.path}-${index}`}
-                        className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                      >
+                      <div>
                         <div className="flex items-center space-x-3">
-                          <Folder className="h-4 w-4 text-gray-400" />
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">{file.filename}</div>
-                            <div className="text-xs text-gray-500">{file.path}</div>
-                          </div>
+                          <h3 className="font-bold text-gray-900 text-lg">{sampleFile.filename}</h3>
+                          <span className="px-3 py-1 bg-gradient-to-r from-orange-500 to-red-500 text-white text-sm rounded-full font-medium shadow-sm">
+                            {group.files.length} copies
+                          </span>
                         </div>
-                                                 <div className="text-right">
-                           <div className="text-sm text-gray-600">{formatFileSize(file.file_size)}</div>
-                           <div className="text-xs text-gray-400">{formatDate(file.modification_datetime)}</div>
-                         </div>
+                        <div className="flex items-center space-x-6 text-sm text-gray-600 mt-2">
+                          <span className="flex items-center space-x-2 bg-blue-50 px-2 py-1 rounded">
+                            <HardDrive className="h-4 w-4 text-blue-600" />
+                            <span className="font-medium">{formatFileSize(sampleFile.file_size)}</span>
+                          </span>
+                          <span className="flex items-center space-x-2 bg-red-50 px-2 py-1 rounded">
+                            <Trash2 className="h-4 w-4 text-red-600" />
+                            <span className="font-medium">Wasting {formatFileSize(wastedSpaceForGroup)}</span>
+                          </span>
+                        </div>
                       </div>
-                    ))}
+                    </div>
+                    <button
+                      onClick={() => toggleGroup(group.checksum)}
+                      className="btn btn-secondary flex items-center space-x-2"
+                    >
+                      <span>{isExpanded ? 'Hide' : 'Show'} Files</span>
+                      {isExpanded ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </button>
                   </div>
-                )}
+
+                  {/* Checksum Row */}
+                  <div className="bg-gray-50 rounded-lg p-3 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs text-gray-500 uppercase tracking-wide font-medium">SHA256 Checksum</span>
+                        <div className="font-mono text-sm text-gray-700 mt-1 break-all">
+                          {group.checksum}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => copyToClipboard(group.checksum)}
+                        className="btn btn-secondary flex items-center space-x-1 ml-4"
+                        title="Copy checksum"
+                      >
+                        <ClipboardCopy className="h-4 w-4" />
+                        <span className="hidden sm:inline">Copy</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* File List */}
+                  {isExpanded && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                        <Folder className="h-4 w-4 mr-2" />
+                        All File Locations:
+                      </h4>
+                      <div className="grid gap-2">
+                        {group.files.map((file, index) => (
+                          <div
+                            key={`${file.path}-${index}`}
+                            className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg hover:shadow-md transition-all"
+                          >
+                            <div className="flex items-center space-x-3 flex-1 min-w-0">
+                              <div className="text-gray-400">
+                                {getFileTypeIcon(file.filename)}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium text-gray-900 truncate">
+                                  {file.filename}
+                                </div>
+                                <div className="text-xs text-gray-500 truncate" title={file.path}>
+                                  {file.path}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-3">
+                              <div className="text-xs text-gray-500">
+                                {formatDate(file.modification_datetime)}
+                              </div>
+                              <button
+                                onClick={() => copyToClipboard(file.path)}
+                                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                                title="Copy file path"
+                              >
+                                <ClipboardCopy className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })
         )}
       </div>
+
+      {/* Pagination Controls (Bottom) */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center">
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              <span>Previous</span>
+            </button>
+            
+            <div className="flex items-center space-x-1">
+              {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
+                let page;
+                if (totalPages <= 7) {
+                  page = i + 1;
+                } else if (currentPage <= 4) {
+                  page = i + 1;
+                } else if (currentPage >= totalPages - 3) {
+                  page = totalPages - 6 + i;
+                } else {
+                  page = currentPage - 3 + i;
+                }
+                
+                if (page <= totalPages && page > 0) {
+                  return (
+                    <button
+                      key={page}
+                      onClick={() => setCurrentPage(page)}
+                      className={`btn ${page === currentPage ? 'btn-primary' : 'btn-secondary'} w-10 h-10 p-0`}
+                    >
+                      {page}
+                    </button>
+                  );
+                }
+                return null;
+              })}
+            </div>
+
+            <button
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+            >
+              <span>Next</span>
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }; 

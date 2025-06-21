@@ -8,9 +8,9 @@ import {
   CheckCircle, 
   XCircle,
   TrendingUp,
-  Activity
+  Activity,
+  BarChart3
 } from 'lucide-react';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import FileIndexerAPI from '../lib/api';
 import { formatFileSize, formatNumber } from '../lib/utils';
 
@@ -85,21 +85,6 @@ export default function Dashboard() {
     ? stats.total_size * (stats.duplicate_files / stats.total_files)
     : 0;
 
-  // Prepare data for charts
-  const sizeChartData = vizData.size_distribution.map(item => ({
-    name: item.size_range,
-    value: item.count,
-    size: item.total_size,
-  }));
-
-  const extensionChartData = vizData.extension_stats.slice(0, 10).map(item => ({
-    name: item.extension,
-    files: item.count,
-    size: item.total_size,
-  }));
-
-  const COLORS = ['#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6b7280'];
-
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
@@ -166,60 +151,35 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* File Size Distribution */}
+      {/* Additional Info Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="card">
-          <div className="card-header">
-            <h3 className="text-lg font-semibold text-slate-900">File Size Distribution</h3>
-            <p className="text-sm text-slate-600">Files grouped by size ranges</p>
-          </div>
-          <div className="card-content">
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={sizeChartData}
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={100}
-                  dataKey="value"
-                  label={({ name, value }) => `${name}: ${formatNumber(value)}`}
-                >
-                  {sizeChartData.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip 
-                  formatter={(value, name, props) => [
-                    `${formatNumber(value as number)} files`,
-                    props.payload.name
-                  ]}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="card-content text-center">
+            <div className="text-3xl font-bold text-blue-600 mb-2">
+              {formatFileSize(stats.largest_file_size)}
+            </div>
+            <p className="text-sm text-gray-600">Largest File</p>
           </div>
         </div>
-
-        {/* Top File Extensions */}
+        
         <div className="card">
-          <div className="card-header">
-            <h3 className="text-lg font-semibold text-slate-900">Top File Extensions</h3>
-            <p className="text-sm text-slate-600">Most common file types</p>
+          <div className="card-content text-center">
+            <div className="text-3xl font-bold text-green-600 mb-2">
+              {stats.most_recent_modification 
+                ? new Date(stats.most_recent_modification).toLocaleDateString()
+                : 'N/A'
+              }
+            </div>
+            <p className="text-sm text-gray-600">Most Recent File</p>
           </div>
-          <div className="card-content">
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={extensionChartData}>
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip 
-                  formatter={(value, name) => [
-                    formatNumber(value as number),
-                    name === 'files' ? 'Files' : 'Total Size'
-                  ]}
-                />
-                <Bar dataKey="files" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+        </div>
+        
+        <div className="card">
+          <div className="card-content text-center">
+            <div className="text-3xl font-bold text-purple-600 mb-2">
+              {((stats.files_with_checksums / stats.total_files) * 100).toFixed(0)}%
+            </div>
+            <p className="text-sm text-gray-600">Checksum Coverage</p>
           </div>
         </div>
       </div>
@@ -241,7 +201,7 @@ export default function Dashboard() {
               <span>Find Duplicates</span>
             </button>
             <button className="btn btn-secondary flex items-center justify-center space-x-2 py-3">
-              <BarChart className="w-4 h-4" />
+              <BarChart3 className="w-4 h-4" />
               <span>View Analytics</span>
             </button>
           </div>
