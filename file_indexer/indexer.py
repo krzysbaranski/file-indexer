@@ -327,7 +327,8 @@ class FileIndexer:
                     )
 
             except PermissionError:
-                # Skip files we can't access due to permissions (don't spam with messages)
+                # Skip files we can't access due to permissions
+                print(f"Permission denied: {file_path}")
                 self.permission_errors += 1
                 continue
             except OSError as e:
@@ -629,6 +630,7 @@ class FileIndexer:
 
             except PermissionError:
                 # Skip files we can't access due to permissions
+                print(f"Permission denied: {file_path}")
                 self.permission_errors += 1
                 errors += 1
                 continue
