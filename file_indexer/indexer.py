@@ -237,14 +237,14 @@ class FileIndexer:
                     )
                     added += 1
 
-                processed += 1
-                if processed % 100 == 0:
-                    print(f"Processed {processed}/{len(files)} files...")
-
             except Exception as e:
                 print(f"Error processing file {file_path}: {e}")
                 errors += 1
-                processed += 1
+
+            # Increment processed counter for all files (successful or error)
+            processed += 1
+            if processed % 100 == 0:
+                print(f"Processed {processed}/{len(files)} files...")
 
         print(
             f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Skipped: {skipped}, Errors: {errors}"
