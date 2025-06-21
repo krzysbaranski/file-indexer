@@ -906,6 +906,136 @@ class FileIndexer:
         self.permission_errors = 0
         self.deleted_files = 0
 
+    def _check_directory_existence(
+        self, directory_path: str
+    ) -> tuple[bool, str | None]:
+        """
+        Check if a directory exists.
+
+        Args:
+            directory_path: Path to the directory to check
+
+        Returns:
+            Tuple of (exists: bool, error_message: str | None)
+            - (True, None): Directory exists
+            - (False, None): Directory doesn't exist
+            - (False, error_message): Error occurred during check
+        """
+        try:
+            path_obj = Path(directory_path)
+            return (path_obj.exists(), None)
+        except PermissionError:
+            return (False, f"Permission denied checking directory: {directory_path}")
+        except OSError as e:
+            return (False, f"Error checking directory {directory_path}: {e}")
+
+    def _mark_directory_files_as_deleted(
+        self,
+        directory_path: str,
+        files_in_dir: list[tuple[str, int, str]],
+        deleted_files: list[tuple[str, str]],
+        deleted_directories: set[str],
+    ) -> int:
+        """
+        Mark all files in a deleted directory as deleted.
+
+        Args:
+            directory_path: Path of the deleted directory
+            files_in_dir: List of (filename, file_size, indexed_at) tuples
+            deleted_files: List to append deleted file records to
+            deleted_directories: Set to add the deleted directory to
+
+        Returns:
+            Number of files marked as deleted
+        """
+        deleted_directories.add(directory_path)
+        files_marked = 0
+
+        for filename, _file_size, _indexed_at in files_in_dir:
+            deleted_files.append((directory_path, filename))
+            files_marked += 1
+
+        return files_marked
+
+    def _handle_directory_access_error(
+        self,
+        directory_path: str,
+        files_in_dir: list[tuple[str, int, str]],
+        error_message: str,
+        directories_to_process_individually: dict[str, list[tuple[str, int, str]]],
+        deleted_files: list[tuple[str, str]],
+        deleted_directories: set[str],
+    ) -> tuple[int, int]:
+        """
+        Handle errors when accessing directories during cleanup.
+
+        Args:
+            directory_path: Path of the directory with access issues
+            files_in_dir: List of files in the directory
+            error_message: Error message to log
+            directories_to_process_individually: Dict to add directories that need individual file checks
+            deleted_files: List to append deleted file records to (for OS errors)
+            deleted_directories: Set to add deleted directories to (for OS errors)
+
+        Returns:
+            Tuple of (permission_errors_count, files_marked_as_deleted)
+        """
+        print(error_message)
+
+        if "Permission denied" in error_message:
+            # For permission errors, still try to check individual files
+            directories_to_process_individually[directory_path] = files_in_dir
+            return (1, 0)
+        else:
+            # For other OS errors, treat as deleted directory
+            files_marked = self._mark_directory_files_as_deleted(
+                directory_path, files_in_dir, deleted_files, deleted_directories
+            )
+            return (0, files_marked)
+
+    def _report_phase1_progress(
+        self, checked_directories: int, total_directories: int
+    ) -> None:
+        """
+        Report progress during Phase 1 directory checking.
+
+        Args:
+            checked_directories: Number of directories checked so far
+            total_directories: Total number of directories to check
+        """
+        if checked_directories % 100 == 0:
+            print(
+                f"  Checked {checked_directories:,}/{total_directories:,} directories..."
+            )
+
+    def _delete_files_from_deleted_directories(
+        self,
+        deleted_directories: set[str],
+        files_by_directory: dict[str, list[tuple[str, int, str]]],
+        batch_size: int,
+    ) -> None:
+        """
+        Delete database records for all files in directories that were entirely deleted.
+
+        Args:
+            deleted_directories: Set of directory paths that no longer exist
+            files_by_directory: Dict mapping directory paths to their file lists
+            batch_size: Number of files to delete in each batch
+        """
+        if not deleted_directories:
+            return
+
+        directory_files_to_delete = []
+        for directory_path in deleted_directories:
+            for filename, _, _ in files_by_directory[directory_path]:
+                directory_files_to_delete.append((directory_path, filename))
+
+        if directory_files_to_delete:
+            # Process in batches to avoid overwhelming the database
+            for i in range(0, len(directory_files_to_delete), batch_size):
+                batch = directory_files_to_delete[i : i + batch_size]
+                self._delete_files_from_database(batch)
+
     def cleanup_deleted_files(
         self, batch_size: int = 1000, dry_run: bool = False
     ) -> dict:
@@ -951,7 +1081,7 @@ class FileIndexer:
 
         # Group files by directory for efficient checking
         print("Grouping files by directory for optimization...")
-        files_by_directory = {}
+        files_by_directory: dict[str, list[tuple[str, int, str]]] = {}
         for path, filename, file_size, indexed_at in all_files:
             if path not in files_by_directory:
                 files_by_directory[path] = []
@@ -960,8 +1090,8 @@ class FileIndexer:
         print(f"Found {len(files_by_directory):,} unique directories")
 
         # Track statistics
-        deleted_files = []
-        deleted_directories = set()
+        deleted_files: list[tuple[str, str]] = []
+        deleted_directories: set[str] = set()
         permission_errors = 0
         checked_files = 0
         checked_directories = 0
@@ -972,45 +1102,40 @@ class FileIndexer:
 
         # Phase 1: Check directories first
         print("Phase 1: Checking directories...")
-        directories_to_process_individually = {}
+        directories_to_process_individually: dict[str, list[tuple[str, int, str]]] = {}
 
         for directory_path, files_in_dir in files_by_directory.items():
             checked_directories += 1
 
-            try:
-                path_obj = Path(directory_path)
+            # Check if directory exists
+            exists, error_message = self._check_directory_existence(directory_path)
 
-                # Check if directory exists
-                if not path_obj.exists():
-                    # Entire directory is gone - mark all files as deleted
-                    deleted_directories.add(directory_path)
-                    for filename, _file_size, _indexed_at in files_in_dir:
-                        deleted_files.append((directory_path, filename))
-                        files_deleted_by_directory += 1
-                        checked_files += 1
-                else:
-                    # Directory exists - need to check individual files
-                    directories_to_process_individually[directory_path] = files_in_dir
-
-                # Progress reporting
-                if checked_directories % 100 == 0:
-                    print(
-                        f"  Checked {checked_directories:,}/{len(files_by_directory):,} directories..."
-                    )
-
-            except PermissionError:
-                permission_errors += 1
-                print(f"Permission denied checking directory: {directory_path}")
-                # Still need to check individual files in this case
+            if error_message:
+                # Handle access errors (permission denied, OS errors)
+                perm_errors, files_marked = self._handle_directory_access_error(
+                    directory_path,
+                    files_in_dir,
+                    error_message,
+                    directories_to_process_individually,
+                    deleted_files,
+                    deleted_directories,
+                )
+                permission_errors += perm_errors
+                files_deleted_by_directory += files_marked
+                checked_files += files_marked
+            elif not exists:
+                # Directory doesn't exist - mark all files as deleted
+                files_marked = self._mark_directory_files_as_deleted(
+                    directory_path, files_in_dir, deleted_files, deleted_directories
+                )
+                files_deleted_by_directory += files_marked
+                checked_files += files_marked
+            else:
+                # Directory exists - need to check individual files
                 directories_to_process_individually[directory_path] = files_in_dir
-            except OSError as e:
-                print(f"Error checking directory {directory_path}: {e}")
-                # Treat as deleted directory
-                deleted_directories.add(directory_path)
-                for filename, _file_size, _indexed_at in files_in_dir:
-                    deleted_files.append((directory_path, filename))
-                    files_deleted_by_directory += 1
-                    checked_files += 1
+
+            # Progress reporting
+            self._report_phase1_progress(checked_directories, len(files_by_directory))
 
         print(
             f"Phase 1 completed: {len(deleted_directories):,} directories deleted entirely"
@@ -1078,16 +1203,9 @@ class FileIndexer:
 
         # Delete files from directories that were entirely deleted (if not already done in batches)
         if deleted_directories and not dry_run:
-            directory_files_to_delete = []
-            for directory_path in deleted_directories:
-                for filename, _, _ in files_by_directory[directory_path]:
-                    directory_files_to_delete.append((directory_path, filename))
-
-            if directory_files_to_delete:
-                # Process in batches to avoid overwhelming the database
-                for i in range(0, len(directory_files_to_delete), batch_size):
-                    batch = directory_files_to_delete[i : i + batch_size]
-                    self._delete_files_from_database(batch)
+            self._delete_files_from_deleted_directories(
+                deleted_directories, files_by_directory, batch_size
+            )
 
         # Report results
         print("\nCleanup scan completed:")

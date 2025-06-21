@@ -254,9 +254,7 @@ def main() -> None:
             if cleanup_result["dry_run"]:
                 print("  Note: This was a dry run - no changes were made")
         elif args.cleanup_empty_dirs:
-            cleanup_result = indexer.cleanup_empty_directories(
-                batch_size=args.batch_size, dry_run=args.dry_run
-            )
+            cleanup_result = indexer.cleanup_empty_directories(dry_run=args.dry_run)
             print("\nEmpty Directory Cleanup Summary:")
             print(f"  Directories checked: {cleanup_result['total_checked']:,}")
             print(f"  Empty directories found: {cleanup_result['empty_directories']:,}")
