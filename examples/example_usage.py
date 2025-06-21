@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Example usage of the FileIndexer class.
-This demonstrates how to use the file indexer programmatically with the new optimizations.
+Example usage of the File Indexer with various features.
 """
 
 from pathlib import Path
@@ -26,115 +25,69 @@ def format_size(size_bytes: int) -> str:
 
 
 def main():
-    # Initialize the file indexer with optimizations
-    # Skip checksums for files larger than 50MB and empty files
+    """Demonstrate various file indexer features."""
+    # Initialize indexer
     indexer = FileIndexer(
-        "example_file_index.db",
-        max_workers=4,  # Use 4 parallel workers
-        max_checksum_size=50 * 1024 * 1024,  # 50MB limit
+        db_path="example_index.db",
+        max_workers=4,
+        max_checksum_size=50 * 1024 * 1024,  # 50MB
         skip_empty_files=True,
     )
 
-    print("=== Optimized File Indexer Example ===\n")
-
     try:
-        # Example 1: Index the current directory with batching
-        current_dir = Path.cwd()
-        print(f"1. Indexing current directory: {current_dir}")
-        print("   Using parallel processing and checksum optimization...")
-        indexer.update_database(str(current_dir), recursive=True, batch_size=500)
-        print()
+        # Example 1: Traditional full indexing (slower but complete)
+        print("=== Example 1: Traditional Full Indexing ===")
+        indexer.update_database("/path/to/directory", recursive=True)
 
-        # Example 2: Show enhanced database statistics
-        print("2. Enhanced Database Statistics:")
-        stats = indexer.get_stats()
-        print(f"   Total files: {stats['total_files']:,}")
-        print(f"   Total size: {format_size(stats['total_size'])}")
-        print(f"   Files with checksums: {stats['files_with_checksum']:,}")
-        print(f"   Files without checksums: {stats['files_without_checksum']:,}")
-        print(f"   Unique checksums: {stats['unique_checksums']:,}")
-        print(f"   Duplicate files: {stats['duplicate_files']:,}")
-        print(f"   Last indexed: {stats['last_indexed']}")
+        # Example 2: Two-phase indexing (recommended for large datasets)
+        print("\n=== Example 2: Two-Phase Indexing ===")
+        indexer2 = FileIndexer("two_phase_index.db")
+        
+        # This is much faster as it's the complete process
+        indexer2.two_phase_indexing("/path/to/directory", recursive=True)
+        indexer2.close()
 
-        if stats["checksum_calculations"] > 0 or stats["checksum_reuses"] > 0:
-            print(f"\n   Performance Statistics:")
-            print(f"   Checksum calculations: {stats['checksum_calculations']:,}")
-            print(f"   Checksum reuses: {stats['checksum_reuses']:,}")
-            print(f"   Skipped checksums: {stats['skipped_checksums']:,}")
-            print(f"   Optimization: {stats['optimization_percentage']:.1f}%")
-        print()
+        # Example 3: Manual two-phase process (for separate CLI processes)
+        print("\n=== Example 3: Manual Two-Phase Process ===")
+        indexer3 = FileIndexer("manual_index.db")
+        
+        # Phase 1: Fast indexing without checksums
+        print("Phase 1: Indexing files without checksums...")
+        indexer3.index_files_without_checksums("/path/to/directory", recursive=True)
+        
+        # Phase 2: Calculate checksums only for potential duplicates
+        print("Phase 2: Calculating checksums for files with duplicate sizes...")
+        indexer3.calculate_checksums_for_duplicates()
+        
+        indexer3.close()
 
-        # Example 3: Search for files with and without checksums
-        print("3. Searching for files with checksums:")
-        files_with_checksums = indexer.search_files(has_checksum=True)
-        for file_info in files_with_checksums[:3]:  # Show first 3
-            checksum_short = (
-                file_info["checksum"][:16] + "..." if file_info["checksum"] else "None"
-            )
-            size_str = format_size(file_info["file_size"])
-            print(
-                f"   {file_info['path']}/{file_info['filename']} ({checksum_short}, {size_str})"
-            )
-        if len(files_with_checksums) > 3:
-            print(
-                f"   ... and {len(files_with_checksums) - 3} more files with checksums"
-            )
-        print()
+        # Example 4: Search operations
+        print("\n=== Example 4: Search Operations ===")
 
-        print("4. Searching for files without checksums:")
-        files_without_checksums = indexer.search_files(has_checksum=False)
-        for file_info in files_without_checksums[:3]:  # Show first 3
-            size_str = format_size(file_info["file_size"])
-            print(
-                f"   {file_info['path']}/{file_info['filename']} (no checksum, {size_str})"
-            )
-        if len(files_without_checksums) > 3:
-            print(
-                f"   ... and {len(files_without_checksums) - 3} more files without checksums"
-            )
-        print()
+        # Find files without checksums
+        no_checksum_files = indexer.search_files(has_checksum=False)
+        print(f"Files without checksums: {len(no_checksum_files)}")
 
-        # Example 5: Find duplicate files (only among files with checksums)
-        print("5. Looking for duplicate files:")
+        # Find files with checksums
+        with_checksum_files = indexer.search_files(has_checksum=True)
+        print(f"Files with checksums: {len(with_checksum_files)}")
+
+        # Find duplicates
         duplicates = indexer.find_duplicates()
-        if duplicates:
-            print(f"   Found {len(duplicates)} duplicate files:")
-            current_checksum = None
-            for count, dup in enumerate(duplicates):
-                if count >= 6:  # Limit output
-                    print("   ... (truncated)")
-                    break
-                if dup["checksum"] != current_checksum:
-                    current_checksum = dup["checksum"]
-                    print(f"   Checksum {current_checksum[:16]}...:")
-                size_str = format_size(dup["file_size"])
-                print(f"     {dup['path']}/{dup['filename']} ({size_str})")
-        else:
-            print("   No duplicate files found.")
-        print()
+        print(f"Duplicate files found: {len(duplicates)}")
 
-        # Example 6: Search by file extension and size
-        print("6. Searching for Python files:")
-        python_files = indexer.search_files(filename_pattern="%.py")
-        if python_files:
-            for file_info in python_files[:3]:  # Show first 3 results
-                size_str = format_size(file_info["file_size"])
-                checksum_str = (
-                    "with checksum" if file_info["checksum"] else "no checksum"
-                )
-                print(
-                    f"   {file_info['path']}/{file_info['filename']} ({size_str}, {checksum_str})"
-                )
-            if len(python_files) > 3:
-                print(f"   ... and {len(python_files) - 3} more Python files")
-        else:
-            print("   No .py files found.")
+        # Show statistics
+        stats = indexer.get_stats()
+        print(f"\nDatabase Statistics:")
+        print(f"  Total files: {stats['total_files']:,}")
+        print(f"  Files with checksums: {stats['files_with_checksum']:,}")
+        print(f"  Files without checksums: {stats['files_without_checksum']:,}")
+        print(f"  Duplicate files: {stats['duplicate_files']:,}")
 
     except Exception as e:
         print(f"Error: {e}")
 
     finally:
-        # Always close the database connection
         indexer.close()
         print("\nExample completed!")
 

@@ -1,16 +1,16 @@
 # File Indexer
 
-A high-performance file indexing tool using DuckDB that creates a searchable database of files with checksums, optimized for large directories.
+A high-performance file indexing tool using DuckDB with parallel processing and intelligent checksum optimization.
 
 ## Features
 
-- 🚀 **High Performance**: Parallel checksum calculation and batch database operations
-- 💾 **Smart Checksum Management**: Configurable size limits and empty file handling
-- 🔍 **Flexible Search**: Search by filename, path, checksum, or checksum presence
-- 🔄 **Incremental Updates**: Only processes changed files on subsequent runs
-- 📊 **Detailed Statistics**: Performance metrics and optimization tracking
-- 🔗 **Symlink Aware**: Safely ignores symbolic links during indexing
-- 🧪 **Duplicate Detection**: Find files with identical content
+- **Fast file indexing** with parallel processing
+- **Intelligent checksum calculation** - only for potential duplicates
+- **Two-phase indexing** - index metadata first, then calculate checksums selectively
+- **Configurable size limits** for checksum calculation
+- **Duplicate file detection**
+- **Flexible search capabilities**
+- **Memory-efficient batch processing**
 
 ## Installation
 
@@ -18,32 +18,65 @@ A high-performance file indexing tool using DuckDB that creates a searchable dat
 pip install -r requirements.txt
 ```
 
-## Quick Start
+## Usage
 
-### Command Line Usage
+### Command Line Interface
 
+#### Traditional Full Indexing
 ```bash
-# Basic indexing with default optimizations (100MB checksum limit, skip empty files)
-python -m file_indexer.cli --scan /path/to/directory
+# Index a directory with all files getting checksums (slower but complete)
+python -m file_indexer --scan /path/to/directory --db my_index.db
 
-# High-performance indexing for large directories
-python -m file_indexer.cli --scan /path/to/directory --max-workers 8 --batch-size 2000
+# Configuration options
+python -m file_indexer --scan /path/to/directory \
+    --db my_index.db \
+    --max-checksum-size 100MB \
+    --batch-size 500 \
+    --max-workers 8
+```
 
-# Skip checksums for files larger than 1GB
-python -m file_indexer.cli --scan /path/to/directory --max-checksum-size 1GB
+#### Two-Phase Indexing (Recommended)
 
-# Include checksums for all files (no size limit)
-python -m file_indexer.cli --scan /path/to/directory --max-checksum-size 0
+**Option 1: All-in-one command**
+```bash
+# Complete two-phase indexing in one command
+python -m file_indexer --two-phase /path/to/directory --db my_index.db
+```
 
-# Search for files
-python -m file_indexer.cli --search-filename "*.py"
-python -m file_indexer.cli --search-path "*src*"
-python -m file_indexer.cli --search-has-checksum  # Files with checksums
-python -m file_indexer.cli --search-no-checksum   # Files without checksums
+**Option 2: Separate processes (for operational flexibility)**
+```bash
+# Phase 1: Fast indexing without checksums (can be run separately)
+python -m file_indexer --index-no-checksum /path/to/directory --db my_index.db
 
-# Find duplicates and show database stats
-python -m file_indexer.cli --find-duplicates
-python -m file_indexer.cli --stats
+# Phase 2: Calculate checksums only for files with duplicate sizes (separate process)
+python -m file_indexer --calculate-duplicates --db my_index.db
+```
+
+This approach allows you to:
+- Run the fast indexing first to get immediate file metadata
+- Run checksum calculation later as a background process
+- Resume checksum calculation if interrupted
+- Run checksum calculation on a different machine/schedule
+
+#### Search and Analysis
+```bash
+# Find duplicate files
+python -m file_indexer --find-duplicates --db my_index.db
+
+# Search for files without checksums
+python -m file_indexer --search-no-checksum --db my_index.db
+
+# Search for files with checksums
+python -m file_indexer --search-has-checksum --db my_index.db
+
+# Search by filename pattern
+python -m file_indexer --search-filename "*.py" --db my_index.db
+
+# Search by path pattern
+python -m file_indexer --search-path "/home/user/Documents/*" --db my_index.db
+
+# Show database statistics
+python -m file_indexer --stats --db my_index.db
 ```
 
 ### Programmatic Usage
@@ -51,156 +84,88 @@ python -m file_indexer.cli --stats
 ```python
 from file_indexer import FileIndexer
 
-# Create indexer with performance optimizations
+# Initialize with configuration
 indexer = FileIndexer(
-    "my_files.db",
-    max_workers=4,                    # Parallel processing
-    max_checksum_size=50*1024*1024,   # 50MB limit
-    skip_empty_files=True             # Skip empty files
+    db_path="my_index.db",
+    max_workers=8,
+    max_checksum_size=100 * 1024 * 1024,  # 100MB
+    skip_empty_files=True
 )
 
-# Index directory with batching
-indexer.update_database("/path/to/directory", batch_size=1000)
+# Traditional indexing
+indexer.update_database("/path/to/directory")
 
-# Search and analyze
-python_files = indexer.search_files(filename_pattern="%.py")
-large_files = indexer.search_files(has_checksum=False)  # Files without checksums
+# Two-phase indexing (recommended for large datasets)
+indexer.two_phase_indexing("/path/to/directory")
+
+# Or run phases separately
+indexer.index_files_without_checksums("/path/to/directory")
+indexer.calculate_checksums_for_duplicates()
+
+# Search and analysis
 duplicates = indexer.find_duplicates()
-
-# Get performance statistics
+files_without_checksums = indexer.search_files(has_checksum=False)
 stats = indexer.get_stats()
-print(f"Optimization: {stats['optimization_percentage']:.1f}%")
-print(f"Files with checksums: {stats['files_with_checksum']:,}")
-print(f"Files without checksums: {stats['files_without_checksum']:,}")
 
 indexer.close()
 ```
 
-## Performance Optimizations
+## Two-Phase Indexing Benefits
 
-### Parallel Processing
-- **Multi-core checksum calculation**: Uses all available CPU cores
-- **Configurable worker processes**: Tune for your system
-- **Batch database operations**: Reduces transaction overhead
+The two-phase approach provides significant performance benefits:
 
-### Smart Checksum Management
-- **Size-based skipping**: Skip checksums for files larger than specified size
-- **Empty file handling**: Optionally skip checksum calculation for empty files
-- **Nullable schema**: Files without checksums are still indexed for metadata
+1. **Phase 1 (Fast)**: Index all file metadata without checksums
+   - Captures file paths, sizes, modification times
+   - Very fast - only filesystem metadata operations
+   - Immediate searchability by name, size, date
 
-### Memory Efficiency
-- **Streaming file processing**: Processes files as generator to minimize memory usage
-- **Configurable batch sizes**: Balance memory usage vs. performance
-- **Bulk database queries**: Avoid N+1 query problems
+2. **Phase 2 (Targeted)**: Calculate checksums only for potential duplicates
+   - Only files with the same size get checksums
+   - Dramatically reduces checksum calculations
+   - Can be run separately or scheduled
 
-### Incremental Updates
-- **Change detection**: Only recalculates checksums for modified files
-- **Optimization tracking**: Detailed metrics on performance improvements
-- **Database persistence**: Reuses existing data across runs
+### Performance Comparison
+
+For a dataset with 100,000 files where only 5% are potential duplicates:
+- **Traditional approach**: 100,000 checksum calculations
+- **Two-phase approach**: ~5,000 checksum calculations (95% reduction)
 
 ## Configuration Options
 
-### FileIndexer Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `db_path` | `"file_index.db"` | Database file location |
-| `max_workers` | CPU cores + 4 | Maximum parallel worker processes |
-| `max_checksum_size` | 100MB | Maximum file size for checksum calculation |
-| `skip_empty_files` | `True` | Skip checksum calculation for empty files |
-
-### CLI Options
-
-| Option | Description |
-|--------|-------------|
-| `--max-checksum-size SIZE` | Set checksum size limit (e.g., "100MB", "1GB", "0" for no limit) |
-| `--max-workers N` | Set number of parallel workers |
-| `--batch-size N` | Set batch processing size (default: 1000) |
-| `--no-skip-empty` | Calculate checksums for empty files |
-| `--search-has-checksum` | Find files with checksums |
-| `--search-no-checksum` | Find files without checksums |
+- `--max-checksum-size`: Maximum file size for checksum calculation (default: 100MB)
+- `--batch-size`: Files processed per batch (default: 1000)
+- `--max-workers`: Parallel worker processes (default: CPU count + 4)
+- `--no-skip-empty`: Calculate checksums for empty files (default: skip)
+- `--no-recursive`: Don't scan subdirectories (default: recursive)
 
 ## Database Schema
 
-The tool uses DuckDB with the following optimized schema:
+The tool uses DuckDB with the following schema:
 
 ```sql
 CREATE TABLE files (
     path VARCHAR NOT NULL,
     filename VARCHAR NOT NULL,
-    checksum VARCHAR,                    -- Nullable for large/empty files
+    checksum VARCHAR,  -- Nullable for two-phase indexing
     modification_datetime TIMESTAMP NOT NULL,
     file_size BIGINT NOT NULL,
     indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (path, filename)
 );
-
--- Optimized indexes
-CREATE INDEX idx_checksum ON files(checksum) WHERE checksum IS NOT NULL;
-CREATE INDEX idx_modification_datetime ON files(modification_datetime);
-CREATE INDEX idx_path_filename ON files(path, filename);
-CREATE INDEX idx_file_size ON files(file_size);
 ```
-
-## Performance Benchmarks
-
-Typical performance improvements with optimizations enabled:
-
-- **10-50x faster** checksum calculation (depending on CPU cores)
-- **5-10x faster** database operations through batching
-- **90%+ memory reduction** with streaming processing
-- **50-80% fewer** redundant checksum calculations
-
-### Example Results
-
-```
-Configuration: max_checksum_size=104,857,600 bytes, skip_empty_files=True
-Processed 50,000 files in 2.3 minutes
-Performance: Calculated 15,432 checksums, reused 34,568 (69.1% optimization)
-Skipped checksums for 2,847 files (empty or too large)
-```
-
-## Use Cases
-
-### Large Directory Indexing
-Perfect for indexing large directories like:
-- Media libraries with large video files
-- Code repositories with build artifacts
-- Network shares with mixed file types
-- Backup verification and deduplication
-
-### File Management
-- **Duplicate Detection**: Find identical files across directory trees
-- **Change Tracking**: Monitor file modifications over time
-- **Space Analysis**: Identify large files without checksums
-- **Content Search**: Find files by content hash
-
-### Data Integrity
-- **Backup Verification**: Ensure file integrity over time
-- **Archive Management**: Track checksums for long-term storage
-- **Selective Processing**: Skip checksums for files that don't need verification
 
 ## Examples
 
-See `examples/example_usage.py` for comprehensive usage examples including:
-- Parallel processing setup
-- Performance monitoring
-- Advanced search patterns
-- Statistics analysis
+See `examples/example_usage.py` for comprehensive usage examples.
 
-## Development
+## Performance Tips
 
-Run tests:
-```bash
-pytest tests/
-```
-
-The test suite includes:
-- Performance optimization verification
-- Nullable checksum handling
-- Schema migration testing
-- Parallel processing validation
+1. **Use two-phase indexing** for large datasets
+2. **Adjust batch size** based on available memory
+3. **Set appropriate checksum size limits** for your use case
+4. **Use parallel processing** with `--max-workers`
+5. **Run Phase 2 separately** for operational flexibility
 
 ## License
 
-MIT License - see LICENSE file for details. 
+MIT License 

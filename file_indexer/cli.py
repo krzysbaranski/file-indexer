@@ -90,6 +90,19 @@ def main() -> None:
         help="Don't skip checksum calculation for empty files",
     )
     parser.add_argument(
+        "--two-phase",
+        help="Perform two-phase indexing: first index without checksums, then calculate checksums for files with duplicate sizes",
+    )
+    parser.add_argument(
+        "--index-no-checksum",
+        help="Phase 1 only: Index files without calculating checksums (fast)",
+    )
+    parser.add_argument(
+        "--calculate-duplicates",
+        action="store_true",
+        help="Phase 2 only: Calculate checksums for files with duplicate sizes",
+    )
+    parser.add_argument(
         "--search-filename", help="Search for files by filename pattern"
     )
     parser.add_argument("--search-path", help="Search for files by path pattern")
@@ -129,6 +142,16 @@ def main() -> None:
             indexer.update_database(
                 args.scan, not args.no_recursive, batch_size=args.batch_size
             )
+        elif args.two_phase:
+            indexer.two_phase_indexing(
+                args.two_phase, not args.no_recursive, batch_size=args.batch_size
+            )
+        elif args.index_no_checksum:
+            indexer.index_files_without_checksums(
+                args.index_no_checksum, not args.no_recursive, batch_size=args.batch_size
+            )
+        elif args.calculate_duplicates:
+            indexer.calculate_checksums_for_duplicates(batch_size=args.batch_size // 2)
         elif any(
             [
                 args.search_filename,
