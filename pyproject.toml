@@ -12,8 +12,10 @@ duckdb = "^1.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
+pytest-cov = "^4.0"
 ruff = "^0.6.0"
 mypy = "^1.11.0"
+pre-commit = "^3.0"
 
 [tool.poetry.scripts]
 file-indexer = "file_indexer.cli:main"

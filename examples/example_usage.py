@@ -4,7 +4,7 @@ Example usage of the FileIndexer class.
 This demonstrates how to use the file indexer programmatically.
 """
 
-import os
+from pathlib import Path
 
 from file_indexer import FileIndexer
 
@@ -17,7 +17,7 @@ def main():
 
     try:
         # Example 1: Index the current directory
-        current_dir = os.getcwd()
+        current_dir = Path.cwd()
         print(f"1. Indexing current directory: {current_dir}")
         indexer.update_database(current_dir, recursive=True)
         print()
@@ -49,8 +49,7 @@ def main():
         if duplicates:
             print(f"   Found {len(duplicates)} duplicate files:")
             current_checksum = None
-            count = 0
-            for dup in duplicates:
+            for count, dup in enumerate(duplicates):
                 if count >= 10:  # Limit output
                     print("   ... (truncated)")
                     break
@@ -58,7 +57,6 @@ def main():
                     current_checksum = dup["checksum"]
                     print(f"   Checksum {current_checksum[:16]}...:")
                 print(f"     {dup['path']}/{dup['filename']}")
-                count += 1
         else:
             print("   No duplicate files found.")
         print()
