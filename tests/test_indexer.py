@@ -900,7 +900,6 @@ class TestFileIndexer:
 
     def test_checksum_worker_function(self):
         """Test the checksum worker function directly."""
-        import os
         import tempfile
 
         from file_indexer.indexer import _calculate_checksum_worker
@@ -918,7 +917,7 @@ class TestFileIndexer:
             assert len(checksum) == 64  # SHA256 hex digest length
 
         finally:
-            os.unlink(temp_file_path)
+            Path(temp_file_path).unlink()
 
         # Test with non-existent file
         nonexistent_path = "/nonexistent/file.txt"
