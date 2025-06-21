@@ -12,7 +12,9 @@ from typing import Any, Generator
 import duckdb
 
 
-def _calculate_checksum_worker(file_path: str, algorithm: str = "sha256") -> tuple[str, str]:
+def _calculate_checksum_worker(
+    file_path: str, algorithm: str = "sha256"
+) -> tuple[str, str]:
     """
     Worker function for calculating checksums in parallel.
     Returns (file_path, checksum) tuple.
@@ -24,17 +26,21 @@ def _calculate_checksum_worker(file_path: str, algorithm: str = "sha256") -> tup
             for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
                 hash_func.update(chunk)
         return (file_path, str(hash_func.hexdigest()))
+    except PermissionError:
+        # Permission denied - return empty checksum silently
+        return (file_path, "")
     except OSError:
+        # Other OS errors - return empty checksum
         return (file_path, "")
 
 
 class FileIndexer:
     def __init__(
-        self, 
-        db_path: str = "file_index.db", 
+        self,
+        db_path: str = "file_index.db",
         max_workers: int = None,
         max_checksum_size: int = 100 * 1024 * 1024,  # 100MB default
-        skip_empty_files: bool = True
+        skip_empty_files: bool = True,
     ):
         """
         Initialize the FileIndexer with a DuckDB database.
@@ -52,13 +58,14 @@ class FileIndexer:
         self.skip_empty_files = skip_empty_files
         self._create_table()
         self._migrate_schema()
-        
+
         # Statistics for optimization tracking
         self.checksum_calculations = 0
         self.checksum_reuses = 0
         self.skipped_files = 0
         self.ignored_symlinks = 0
         self.skipped_checksums = 0  # Files that don't get checksums
+        self.permission_errors = 0  # Files that couldn't be accessed due to permissions
 
     def _create_table(self) -> None:
         """Create the files table if it doesn't exist with nullable checksum."""
@@ -88,12 +95,16 @@ class FileIndexer:
         try:
             # Check if the checksum column allows NULL
             schema_info = self.conn.execute("PRAGMA table_info(files)").fetchall()
-            checksum_column = next((col for col in schema_info if col[1] == 'checksum'), None)
-            
-            if checksum_column and checksum_column[3] == 1:  # NOT NULL constraint exists
+            checksum_column = next(
+                (col for col in schema_info if col[1] == "checksum"), None
+            )
+
+            if (
+                checksum_column and checksum_column[3] == 1
+            ):  # NOT NULL constraint exists
                 # Need to migrate: create new table, copy data, rename
                 print("Migrating database schema to support nullable checksums...")
-                
+
                 self.conn.execute("""
                 CREATE TABLE files_new (
                     path VARCHAR NOT NULL,
@@ -105,18 +116,18 @@ class FileIndexer:
                     PRIMARY KEY (path, filename)
                 );
                 """)
-                
+
                 # Copy existing data
                 self.conn.execute("""
                 INSERT INTO files_new 
                 SELECT path, filename, checksum, modification_datetime, file_size, indexed_at 
                 FROM files;
                 """)
-                
+
                 # Drop old table and rename
                 self.conn.execute("DROP TABLE files;")
                 self.conn.execute("ALTER TABLE files_new RENAME TO files;")
-                
+
                 # Recreate indexes
                 self.conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_checksum ON files(checksum);
@@ -124,28 +135,28 @@ class FileIndexer:
                 CREATE INDEX IF NOT EXISTS idx_path_filename ON files(path, filename);
                 CREATE INDEX IF NOT EXISTS idx_file_size ON files(file_size);
                 """)
-                
+
                 print("Schema migration completed.")
-                
+
         except Exception as e:
             print(f"Schema migration failed (this is normal for new databases): {e}")
 
     def _should_calculate_checksum(self, file_size: int) -> bool:
         """
         Determine if we should calculate checksum for a file based on size.
-        
+
         Args:
             file_size: Size of the file in bytes
-            
+
         Returns:
             True if checksum should be calculated, False otherwise
         """
         if self.skip_empty_files and file_size == 0:
             return False
-        
+
         if self.max_checksum_size > 0 and file_size > self.max_checksum_size:
             return False
-            
+
         return True
 
     def _calculate_checksum(self, file_path: str, algorithm: str = "sha256") -> str:
@@ -155,14 +166,16 @@ class FileIndexer:
         _, checksum = _calculate_checksum_worker(file_path, algorithm)
         return checksum
 
-    def scan_directory_generator(self, directory_path: str, recursive: bool = True) -> Generator[str, None, None]:
+    def scan_directory_generator(
+        self, directory_path: str, recursive: bool = True
+    ) -> Generator[str, None, None]:
         """
         Generator that yields file paths one by one, reducing memory usage.
-        
+
         Args:
             directory_path: Path to directory to scan
             recursive: Whether to scan subdirectories recursively
-            
+
         Yields:
             File paths (excluding symbolic links)
         """
@@ -198,22 +211,24 @@ class FileIndexer:
         """
         return list(self.scan_directory_generator(directory_path, recursive))
 
-    def _get_existing_files_bulk(self, file_paths: list[str]) -> dict[tuple[str, str], tuple[str | None, datetime, int]]:
+    def _get_existing_files_bulk(
+        self, file_paths: list[str]
+    ) -> dict[tuple[str, str], tuple[str | None, datetime, int]]:
         """
         Get existing file records in bulk to avoid N+1 query problem.
-        
+
         Returns:
             Dictionary mapping (path, filename) to (checksum, modification_datetime, file_size)
         """
         if not file_paths:
             return {}
-            
+
         # Prepare path-filename pairs
         path_filename_pairs = []
         for file_path in file_paths:
             path_obj = Path(file_path)
             path_filename_pairs.append((str(path_obj.parent), path_obj.name))
-        
+
         # Build bulk query with IN clause
         placeholders = ",".join(["(?, ?)"] * len(path_filename_pairs))
         query = f"""
@@ -221,51 +236,60 @@ class FileIndexer:
         FROM files 
         WHERE (path, filename) IN ({placeholders})
         """
-        
+
         # Flatten the pairs for the query parameters
         params = []
         for path, filename in path_filename_pairs:
             params.extend([path, filename])
-        
+
         results = self.conn.execute(query, params).fetchall()
-        
+
         # Build lookup dictionary
         existing_files = {}
         for path, filename, checksum, mod_time, file_size in results:
             existing_files[(path, filename)] = (checksum, mod_time, file_size)
-        
+
         return existing_files
 
-    def _process_files_batch(self, file_paths: list[str], existing_files: dict) -> tuple[list, list, list]:
+    def _process_files_batch(
+        self, file_paths: list[str], existing_files: dict
+    ) -> tuple[list, list, list]:
         """
         Process a batch of files, determining which need checksum calculation.
-        
+
         Returns:
             (files_needing_checksums, files_to_update, files_to_insert)
         """
         files_needing_checksums = []
         files_to_update = []
         files_to_insert = []
-        
+
         for file_path in file_paths:
             try:
                 path_obj = Path(file_path)
                 stat_info = path_obj.stat()
-                
+
                 directory = str(path_obj.parent)
                 filename = path_obj.name
                 modification_datetime = datetime.fromtimestamp(stat_info.st_mtime)
                 file_size = stat_info.st_size
-                
+
                 existing_record = existing_files.get((directory, filename))
                 should_calc_checksum = self._should_calculate_checksum(file_size)
-                
+
                 if existing_record:
-                    existing_checksum, existing_mod_time, existing_size = existing_record
+                    existing_checksum, existing_mod_time, existing_size = (
+                        existing_record
+                    )
                     # Check if file has been modified
-                    if modification_datetime == existing_mod_time and file_size == existing_size:
+                    if (
+                        modification_datetime == existing_mod_time
+                        and file_size == existing_size
+                    ):
                         # File unchanged, skip
-                        if existing_checksum is not None:  # Only count as reuse if there was actually a checksum
+                        if (
+                            existing_checksum is not None
+                        ):  # Only count as reuse if there was actually a checksum
                             self.checksum_reuses += 1
                         self.skipped_files += 1
                         continue
@@ -275,35 +299,58 @@ class FileIndexer:
                             files_needing_checksums.append(file_path)
                         else:
                             self.skipped_checksums += 1
-                        files_to_update.append((file_path, directory, filename, modification_datetime, file_size, should_calc_checksum))
+                        files_to_update.append(
+                            (
+                                file_path,
+                                directory,
+                                filename,
+                                modification_datetime,
+                                file_size,
+                                should_calc_checksum,
+                            )
+                        )
                 else:
                     # New file, needs processing
                     if should_calc_checksum:
                         files_needing_checksums.append(file_path)
                     else:
                         self.skipped_checksums += 1
-                    files_to_insert.append((file_path, directory, filename, modification_datetime, file_size, should_calc_checksum))
-                    
+                    files_to_insert.append(
+                        (
+                            file_path,
+                            directory,
+                            filename,
+                            modification_datetime,
+                            file_size,
+                            should_calc_checksum,
+                        )
+                    )
+
+            except PermissionError:
+                # Skip files we can't access due to permissions (don't spam with messages)
+                self.permission_errors += 1
+                continue
             except OSError as e:
+                # For other OS errors, show the message but continue
                 print(f"Error accessing file {file_path}: {e}")
                 continue
-        
+
         return files_needing_checksums, files_to_update, files_to_insert
 
     def _calculate_checksums_parallel(self, file_paths: list[str]) -> dict[str, str]:
         """Calculate checksums for multiple files in parallel."""
         if not file_paths:
             return {}
-            
+
         checksums = {}
-        
+
         with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all checksum calculations
             future_to_path = {
                 executor.submit(_calculate_checksum_worker, file_path): file_path
                 for file_path in file_paths
             }
-            
+
             # Collect results as they complete
             for future in as_completed(future_to_path):
                 try:
@@ -316,17 +363,19 @@ class FileIndexer:
                 except Exception as e:
                     file_path = future_to_path[future]
                     print(f"Error calculating checksum for {file_path}: {e}")
-        
+
         return checksums
 
-    def _bulk_database_operations(self, inserts: list, updates: list) -> tuple[int, int]:
+    def _bulk_database_operations(
+        self, inserts: list, updates: list
+    ) -> tuple[int, int]:
         """Perform bulk database operations."""
         added = 0
         updated = 0
-        
+
         # Begin transaction for better performance
         self.conn.execute("BEGIN TRANSACTION")
-        
+
         try:
             # Bulk inserts
             if inserts:
@@ -336,7 +385,7 @@ class FileIndexer:
                 """
                 self.conn.executemany(insert_sql, inserts)
                 added = len(inserts)
-            
+
             # Bulk updates
             if updates:
                 update_sql = """
@@ -346,54 +395,58 @@ class FileIndexer:
                 """
                 self.conn.executemany(update_sql, updates)
                 updated = len(updates)
-            
+
             self.conn.execute("COMMIT")
-            
+
         except Exception as e:
             self.conn.execute("ROLLBACK")
             print(f"Database operation failed: {e}")
             raise
-        
+
         return added, updated
 
-    def update_database(self, directory_path: str, recursive: bool = True, batch_size: int = 1000) -> None:
+    def update_database(
+        self, directory_path: str, recursive: bool = True, batch_size: int = 1000
+    ) -> None:
         """
         Update database with files from the specified directory using optimized batch processing.
-        
+
         Args:
             directory_path: Path to directory to scan
-            recursive: Whether to scan subdirectories recursively  
+            recursive: Whether to scan subdirectories recursively
             batch_size: Number of files to process in each batch
         """
         print(f"Scanning directory: {directory_path}")
-        print(f"Configuration: max_checksum_size={self.max_checksum_size:,} bytes, skip_empty_files={self.skip_empty_files}")
-        
+        print(
+            f"Configuration: max_checksum_size={self.max_checksum_size:,} bytes, skip_empty_files={self.skip_empty_files}"
+        )
+
         self.ignored_symlinks = 0
         self.skipped_checksums = 0
-        
+
         # Process files in batches to manage memory usage
         file_generator = self.scan_directory_generator(directory_path, recursive)
-        
+
         total_processed = 0
         total_added = 0
         total_updated = 0
         total_errors = 0
-        
+
         # Process files in batches
         batch = []
         for file_path in file_generator:
             batch.append(file_path)
-            
+
             if len(batch) >= batch_size:
                 added, updated, errors = self._process_batch(batch)
                 total_processed += len(batch)
                 total_added += added
                 total_updated += updated
                 total_errors += errors
-                
+
                 print(f"Processed {total_processed} files...")
                 batch = []
-        
+
         # Process remaining files in the last batch
         if batch:
             added, updated, errors = self._process_batch(batch)
@@ -401,68 +454,190 @@ class FileIndexer:
             total_added += added
             total_updated += updated
             total_errors += errors
-        
-        print(f"Completed! Processed: {total_processed}, Added: {total_added}, Updated: {total_updated}, Skipped: {self.skipped_files}, Errors: {total_errors}")
-        
+
+        print(
+            f"Completed! Processed: {total_processed}, Added: {total_added}, Updated: {total_updated}, Skipped: {self.skipped_files}, Errors: {total_errors}"
+        )
+
         if self.ignored_symlinks > 0:
             print(f"Ignored {self.ignored_symlinks} symbolic links")
-        
+
         if self.skipped_checksums > 0:
-            print(f"Skipped checksums for {self.skipped_checksums} files (empty or too large)")
-        
+            print(
+                f"Skipped checksums for {self.skipped_checksums} files (empty or too large)"
+            )
+
+        if self.permission_errors > 0:
+            print(f"Permission denied for {self.permission_errors} files")
+
         # Show optimization benefits
         total_checksum_ops = self.checksum_calculations + self.checksum_reuses
         if total_checksum_ops > 0:
             optimization_pct = (self.checksum_reuses / total_checksum_ops) * 100
-            print(f"Performance: Calculated {self.checksum_calculations} checksums, reused {self.checksum_reuses} ({optimization_pct:.1f}% optimization)")
+            print(
+                f"Performance: Calculated {self.checksum_calculations} checksums, reused {self.checksum_reuses} ({optimization_pct:.1f}% optimization)"
+            )
 
     def _process_batch(self, file_paths: list[str]) -> tuple[int, int, int]:
-        """Process a batch of files."""
+        """Process a batch of files with improved error handling."""
         try:
             # Get existing file records in bulk
             existing_files = self._get_existing_files_bulk(file_paths)
-            
-            # Determine which files need processing
-            files_needing_checksums, files_to_update, files_to_insert = self._process_files_batch(
-                file_paths, existing_files
+
+            # Determine which files need processing (with individual file error handling)
+            files_needing_checksums, files_to_update, files_to_insert = (
+                self._process_files_batch(file_paths, existing_files)
             )
-            
+
             # Calculate checksums in parallel
             checksums = self._calculate_checksums_parallel(files_needing_checksums)
-            
+
             # Prepare database operations
             insert_data = []
             update_data = []
-            
-            for file_path, directory, filename, mod_time, file_size, needs_checksum in files_to_insert:
+
+            for (
+                file_path,
+                directory,
+                filename,
+                mod_time,
+                file_size,
+                needs_checksum,
+            ) in files_to_insert:
                 if needs_checksum:
                     checksum = checksums.get(file_path)
                     if checksum is None and file_path in files_needing_checksums:
                         continue  # Skip files where checksum calculation failed
                 else:
                     checksum = None  # Explicitly set to NULL for large/empty files
-                
+
                 insert_data.append((directory, filename, checksum, mod_time, file_size))
-            
-            for file_path, directory, filename, mod_time, file_size, needs_checksum in files_to_update:
+
+            for (
+                file_path,
+                directory,
+                filename,
+                mod_time,
+                file_size,
+                needs_checksum,
+            ) in files_to_update:
                 if needs_checksum:
                     checksum = checksums.get(file_path)
                     if checksum is None and file_path in files_needing_checksums:
                         continue  # Skip files where checksum calculation failed
                 else:
                     checksum = None  # Explicitly set to NULL for large/empty files
-                
+
                 update_data.append((checksum, mod_time, file_size, directory, filename))
-            
+
             # Perform bulk database operations
             added, updated = self._bulk_database_operations(insert_data, update_data)
-            
+
             errors = len(files_needing_checksums) - len(checksums)
             return added, updated, errors
-            
+
+        except PermissionError as e:
+            print(f"Permission denied accessing files in batch: {e}")
+            # Try to process files individually to save what we can
+            return self._process_batch_individually(file_paths)
         except Exception as e:
             print(f"Error processing batch: {e}")
-            return 0, 0, len(file_paths)
+            # Try to process files individually to save what we can
+            return self._process_batch_individually(file_paths)
+
+    def _process_batch_individually(
+        self, file_paths: list[str]
+    ) -> tuple[int, int, int]:
+        """Process files individually when batch processing fails."""
+        added = 0
+        updated = 0
+        errors = 0
+
+        for file_path in file_paths:
+            try:
+                # Process single file using the legacy method for reliability
+                path_obj = Path(file_path)
+                directory = str(path_obj.parent)
+                filename = path_obj.name
+
+                # Check if file already exists in database
+                existing = self.conn.execute(
+                    """
+                    SELECT checksum, modification_datetime, file_size
+                    FROM files
+                    WHERE path = ? AND filename = ?
+                """,
+                    [directory, filename],
+                ).fetchone()
+
+                # Get file info (only calculates checksum if needed)
+                file_info = self._get_file_info(
+                    file_path, (existing[0], existing[1]) if existing else None
+                )
+
+                if not file_info:
+                    errors += 1
+                    continue
+
+                directory, filename, checksum, modification_datetime, file_size = (
+                    file_info
+                )
+
+                if existing:
+                    existing_checksum, existing_mod_time, existing_size = existing
+                    # Check if anything has changed
+                    if (
+                        checksum != existing_checksum
+                        or modification_datetime != existing_mod_time
+                        or file_size != existing_size
+                    ):
+                        # Update record
+                        self.conn.execute(
+                            """
+                            UPDATE files
+                            SET checksum = ?, modification_datetime = ?, file_size = ?, indexed_at = CURRENT_TIMESTAMP
+                            WHERE path = ? AND filename = ?
+                        """,
+                            [
+                                checksum,
+                                modification_datetime,
+                                file_size,
+                                directory,
+                                filename,
+                            ],
+                        )
+                        updated += 1
+                    else:
+                        # File hasn't changed, no update needed
+                        self.skipped_files += 1
+                else:
+                    # Insert new file
+                    self.conn.execute(
+                        """
+                        INSERT INTO files (path, filename, checksum, modification_datetime, file_size)
+                        VALUES (?, ?, ?, ?, ?)
+                    """,
+                        [
+                            directory,
+                            filename,
+                            checksum,
+                            modification_datetime,
+                            file_size,
+                        ],
+                    )
+                    added += 1
+
+            except PermissionError:
+                # Skip files we can't access due to permissions
+                self.permission_errors += 1
+                errors += 1
+                continue
+            except Exception as e:
+                print(f"Error processing file {file_path}: {e}")
+                errors += 1
+                continue
+
+        return added, updated, errors
 
     def search_files(
         self,
@@ -497,7 +672,7 @@ class FileIndexer:
         if path_pattern:
             query += " AND path LIKE ?"
             params.append(path_pattern)
-        
+
         if has_checksum is not None:
             if has_checksum:
                 query += " AND checksum IS NOT NULL"
@@ -510,7 +685,7 @@ class FileIndexer:
 
         columns = [
             "path",
-            "filename", 
+            "filename",
             "checksum",
             "modification_datetime",
             "file_size",
@@ -542,7 +717,7 @@ class FileIndexer:
         columns = [
             "path",
             "filename",
-            "checksum", 
+            "checksum",
             "modification_datetime",
             "file_size",
             "indexed_at",
@@ -558,27 +733,43 @@ class FileIndexer:
         stats["total_files"] = total_files_result[0] if total_files_result else 0
 
         # Total size
-        total_size_result = self.conn.execute("SELECT SUM(file_size) FROM files").fetchone()
+        total_size_result = self.conn.execute(
+            "SELECT SUM(file_size) FROM files"
+        ).fetchone()
         stats["total_size"] = (
             total_size_result[0] if total_size_result and total_size_result[0] else 0
         )
 
         # Files with checksums
-        files_with_checksum_result = self.conn.execute("SELECT COUNT(*) FROM files WHERE checksum IS NOT NULL").fetchone()
-        stats["files_with_checksum"] = files_with_checksum_result[0] if files_with_checksum_result else 0
-        
+        files_with_checksum_result = self.conn.execute(
+            "SELECT COUNT(*) FROM files WHERE checksum IS NOT NULL"
+        ).fetchone()
+        stats["files_with_checksum"] = (
+            files_with_checksum_result[0] if files_with_checksum_result else 0
+        )
+
         # Files without checksums
-        stats["files_without_checksum"] = stats["total_files"] - stats["files_with_checksum"]
+        stats["files_without_checksum"] = (
+            stats["total_files"] - stats["files_with_checksum"]
+        )
 
         # Unique checksums (only count non-null checksums)
-        unique_checksums_result = self.conn.execute("SELECT COUNT(DISTINCT checksum) FROM files WHERE checksum IS NOT NULL").fetchone()
-        stats["unique_checksums"] = unique_checksums_result[0] if unique_checksums_result else 0
+        unique_checksums_result = self.conn.execute(
+            "SELECT COUNT(DISTINCT checksum) FROM files WHERE checksum IS NOT NULL"
+        ).fetchone()
+        stats["unique_checksums"] = (
+            unique_checksums_result[0] if unique_checksums_result else 0
+        )
 
         # Duplicate files (only among files with checksums)
-        stats["duplicate_files"] = stats["files_with_checksum"] - stats["unique_checksums"]
+        stats["duplicate_files"] = (
+            stats["files_with_checksum"] - stats["unique_checksums"]
+        )
 
         # Last indexed
-        last_indexed_result = self.conn.execute("SELECT MAX(indexed_at) FROM files").fetchone()
+        last_indexed_result = self.conn.execute(
+            "SELECT MAX(indexed_at) FROM files"
+        ).fetchone()
         stats["last_indexed"] = last_indexed_result[0] if last_indexed_result else None
 
         # Performance statistics
@@ -587,7 +778,8 @@ class FileIndexer:
         stats["skipped_files"] = self.skipped_files
         stats["ignored_symlinks"] = self.ignored_symlinks
         stats["skipped_checksums"] = self.skipped_checksums
-        
+        stats["permission_errors"] = self.permission_errors
+
         total_operations = self.checksum_calculations + self.checksum_reuses
         if total_operations > 0:
             stats["optimization_percentage"] = round(
@@ -605,6 +797,7 @@ class FileIndexer:
         self.skipped_files = 0
         self.ignored_symlinks = 0
         self.skipped_checksums = 0
+        self.permission_errors = 0
 
     def close(self) -> None:
         """Close the database connection."""
@@ -633,7 +826,9 @@ class FileIndexer:
                 existing_checksum, existing_mod_time = existing_record
                 # If modification time hasn't changed, reuse existing checksum
                 if modification_datetime == existing_mod_time:
-                    if existing_checksum is not None:  # Only count as reuse if there was actually a checksum
+                    if (
+                        existing_checksum is not None
+                    ):  # Only count as reuse if there was actually a checksum
                         self.checksum_reuses += 1
                     return (
                         directory,
@@ -654,6 +849,9 @@ class FileIndexer:
                 self.skipped_checksums += 1
 
             return (directory, filename, checksum, modification_datetime, file_size)
+        except PermissionError:
+            # Permission denied - return None silently
+            return None
         except OSError as e:
             print(f"Error accessing file {file_path}: {e}")
             return None

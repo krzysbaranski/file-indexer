@@ -111,11 +111,15 @@ class TestFileIndexer:
         if self.indexer.skip_empty_files:
             assert stats["files_with_checksum"] == 4  # All except empty file
             assert stats["files_without_checksum"] == 1  # Empty file
-            assert stats["unique_checksums"] == 3  # Two files have same content (test1 and duplicate)
+            assert (
+                stats["unique_checksums"] == 3
+            )  # Two files have same content (test1 and duplicate)
             assert stats["duplicate_files"] == 1  # One duplicate pair
         else:
             assert stats["files_with_checksum"] == 5
-            assert stats["unique_checksums"] == 4  # Two files have same content, empty file has unique checksum
+            assert (
+                stats["unique_checksums"] == 4
+            )  # Two files have same content, empty file has unique checksum
             assert stats["duplicate_files"] == 1
         assert stats["last_indexed"] is not None
         assert isinstance(stats["last_indexed"], datetime)
@@ -148,7 +152,7 @@ class TestFileIndexer:
 
         # Search for files with checksums
         files_with_checksum = self.indexer.search_files(has_checksum=True)
-        
+
         # Search for files without checksums
         files_without_checksum = self.indexer.search_files(has_checksum=False)
 
@@ -272,10 +276,14 @@ class TestFileIndexer:
         self.indexer.update_database(self.test_files_dir, recursive=False)
 
         # Should have reused existing checksums for unmodified files
-        assert self.indexer.checksum_calculations == initial_calculations  # No additional calculations
-        
+        assert (
+            self.indexer.checksum_calculations == initial_calculations
+        )  # No additional calculations
+
         if self.indexer.skip_empty_files:
-            assert self.indexer.checksum_reuses == 3  # 3 non-empty files reused checksums
+            assert (
+                self.indexer.checksum_reuses == 3
+            )  # 3 non-empty files reused checksums
         else:
             assert self.indexer.checksum_reuses == 4  # All 4 files reused checksums
 
@@ -296,7 +304,7 @@ class TestFileIndexer:
 
         # Should have calculated checksum for 1 modified file
         assert self.indexer.checksum_calculations == 1
-        
+
         # Should have reused checksums for unmodified files with checksums
         if self.indexer.skip_empty_files:
             assert self.indexer.checksum_reuses == 2  # 2 other non-empty files
@@ -396,63 +404,59 @@ class TestFileIndexer:
         """Test that large files can be skipped for checksum calculation."""
         # Create indexer with very small size limit
         small_limit_indexer = FileIndexer(
-            str(self.db_path) + "_small", 
+            str(self.db_path) + "_small",
             max_checksum_size=10,  # 10 bytes limit
-            skip_empty_files=False
+            skip_empty_files=False,
         )
-        
+
         try:
             # Reset counters
             small_limit_indexer.reset_optimization_counters()
-            
+
             # Index files - most should be skipped due to size
             small_limit_indexer.update_database(self.test_files_dir, recursive=False)
-            
+
             stats = small_limit_indexer.get_stats()
-            
+
             # Should have files indexed but some without checksums due to size
             assert stats["total_files"] == 4  # All files indexed
             assert stats["files_without_checksum"] > 0  # Some files skipped checksum
-            assert small_limit_indexer.skipped_checksums > 0  # Tracked skipped checksums
-            
+            assert (
+                small_limit_indexer.skipped_checksums > 0
+            )  # Tracked skipped checksums
+
         finally:
             small_limit_indexer.close()
 
     def test_empty_file_handling(self):
         """Test handling of empty files with different configurations."""
         # Test with skip_empty_files=True (default)
-        skip_indexer = FileIndexer(
-            str(self.db_path) + "_skip",
-            skip_empty_files=True
-        )
-        
+        skip_indexer = FileIndexer(str(self.db_path) + "_skip", skip_empty_files=True)
+
         try:
             skip_indexer.update_database(self.test_files_dir, recursive=False)
             stats = skip_indexer.get_stats()
-            
+
             # Empty file should not have checksum
             empty_results = skip_indexer.search_files(filename_pattern="empty.txt")
             assert len(empty_results) == 1
             assert empty_results[0]["checksum"] is None
-            
+
         finally:
             skip_indexer.close()
-        
+
         # Test with skip_empty_files=False
-        calc_indexer = FileIndexer(
-            str(self.db_path) + "_calc",
-            skip_empty_files=False
-        )
-        
+        calc_indexer = FileIndexer(str(self.db_path) + "_calc", skip_empty_files=False)
+
         try:
             calc_indexer.update_database(self.test_files_dir, recursive=False)
             stats = calc_indexer.get_stats()
-            
+
             # Empty file should have checksum
             empty_results = calc_indexer.search_files(filename_pattern="empty.txt")
             assert len(empty_results) == 1
             assert empty_results[0]["checksum"] is not None
-            
+
         finally:
             calc_indexer.close()
 
@@ -460,15 +464,15 @@ class TestFileIndexer:
         """Test that schema migration works correctly."""
         # This test is mainly to ensure the migration code doesn't crash
         # The actual migration would require creating an old-format database
-        
+
         # Create a new indexer and verify it works
         migration_indexer = FileIndexer(str(self.db_path) + "_migration")
-        
+
         try:
             migration_indexer.update_database(self.test_files_dir, recursive=False)
             stats = migration_indexer.get_stats()
             assert stats["total_files"] > 0
-            
+
         finally:
             migration_indexer.close()
 
@@ -476,10 +480,10 @@ class TestFileIndexer:
         """Test that batch processing works correctly."""
         # Reset counters
         self.indexer.reset_optimization_counters()
-        
+
         # Index with very small batch size
         self.indexer.update_database(self.test_files_dir, recursive=True, batch_size=2)
-        
+
         stats = self.indexer.get_stats()
         assert stats["total_files"] == 5  # All files should be processed
         assert stats["total_size"] > 0

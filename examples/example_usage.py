@@ -13,15 +13,15 @@ def format_size(size_bytes: int) -> str:
     """Format file size in human readable format."""
     if size_bytes == 0:
         return "0 B"
-    
+
     units = ["B", "KB", "MB", "GB", "TB"]
     size = float(size_bytes)
     unit_index = 0
-    
+
     while size >= 1024 and unit_index < len(units) - 1:
         size /= 1024
         unit_index += 1
-    
+
     return f"{size:.1f} {units[unit_index]}"
 
 
@@ -32,7 +32,7 @@ def main():
         "example_file_index.db",
         max_workers=4,  # Use 4 parallel workers
         max_checksum_size=50 * 1024 * 1024,  # 50MB limit
-        skip_empty_files=True
+        skip_empty_files=True,
     )
 
     print("=== Optimized File Indexer Example ===\n")
@@ -55,8 +55,8 @@ def main():
         print(f"   Unique checksums: {stats['unique_checksums']:,}")
         print(f"   Duplicate files: {stats['duplicate_files']:,}")
         print(f"   Last indexed: {stats['last_indexed']}")
-        
-        if stats['checksum_calculations'] > 0 or stats['checksum_reuses'] > 0:
+
+        if stats["checksum_calculations"] > 0 or stats["checksum_reuses"] > 0:
             print(f"\n   Performance Statistics:")
             print(f"   Checksum calculations: {stats['checksum_calculations']:,}")
             print(f"   Checksum reuses: {stats['checksum_reuses']:,}")
@@ -68,20 +68,30 @@ def main():
         print("3. Searching for files with checksums:")
         files_with_checksums = indexer.search_files(has_checksum=True)
         for file_info in files_with_checksums[:3]:  # Show first 3
-            checksum_short = file_info['checksum'][:16] + "..." if file_info['checksum'] else "None"
-            size_str = format_size(file_info['file_size'])
-            print(f"   {file_info['path']}/{file_info['filename']} ({checksum_short}, {size_str})")
+            checksum_short = (
+                file_info["checksum"][:16] + "..." if file_info["checksum"] else "None"
+            )
+            size_str = format_size(file_info["file_size"])
+            print(
+                f"   {file_info['path']}/{file_info['filename']} ({checksum_short}, {size_str})"
+            )
         if len(files_with_checksums) > 3:
-            print(f"   ... and {len(files_with_checksums) - 3} more files with checksums")
+            print(
+                f"   ... and {len(files_with_checksums) - 3} more files with checksums"
+            )
         print()
 
         print("4. Searching for files without checksums:")
         files_without_checksums = indexer.search_files(has_checksum=False)
         for file_info in files_without_checksums[:3]:  # Show first 3
-            size_str = format_size(file_info['file_size'])
-            print(f"   {file_info['path']}/{file_info['filename']} (no checksum, {size_str})")
+            size_str = format_size(file_info["file_size"])
+            print(
+                f"   {file_info['path']}/{file_info['filename']} (no checksum, {size_str})"
+            )
         if len(files_without_checksums) > 3:
-            print(f"   ... and {len(files_without_checksums) - 3} more files without checksums")
+            print(
+                f"   ... and {len(files_without_checksums) - 3} more files without checksums"
+            )
         print()
 
         # Example 5: Find duplicate files (only among files with checksums)
@@ -97,7 +107,7 @@ def main():
                 if dup["checksum"] != current_checksum:
                     current_checksum = dup["checksum"]
                     print(f"   Checksum {current_checksum[:16]}...:")
-                size_str = format_size(dup['file_size'])
+                size_str = format_size(dup["file_size"])
                 print(f"     {dup['path']}/{dup['filename']} ({size_str})")
         else:
             print("   No duplicate files found.")
@@ -108,9 +118,13 @@ def main():
         python_files = indexer.search_files(filename_pattern="%.py")
         if python_files:
             for file_info in python_files[:3]:  # Show first 3 results
-                size_str = format_size(file_info['file_size'])
-                checksum_str = "with checksum" if file_info['checksum'] else "no checksum"
-                print(f"   {file_info['path']}/{file_info['filename']} ({size_str}, {checksum_str})")
+                size_str = format_size(file_info["file_size"])
+                checksum_str = (
+                    "with checksum" if file_info["checksum"] else "no checksum"
+                )
+                print(
+                    f"   {file_info['path']}/{file_info['filename']} ({size_str}, {checksum_str})"
+                )
             if len(python_files) > 3:
                 print(f"   ... and {len(python_files) - 3} more Python files")
         else:
