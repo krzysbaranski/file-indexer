@@ -823,13 +823,18 @@ class FileIndexer:
         
         # Temporarily disable checksum calculation for all files
         original_max_checksum_size = self.max_checksum_size
-        self.max_checksum_size = 0  # This will make _should_calculate_checksum return False for all files
+        original_skip_empty_files = self.skip_empty_files
+        
+        # Set to values that will make _should_calculate_checksum return False for all files
+        self.max_checksum_size = -1  # Negative value means skip all checksums
+        self.skip_empty_files = True  # Also skip empty files
         
         try:
             self.update_database(directory_path, recursive, batch_size)
         finally:
-            # Restore original setting
+            # Restore original settings
             self.max_checksum_size = original_max_checksum_size
+            self.skip_empty_files = original_skip_empty_files
             
         print("Phase 1 completed: All files indexed without checksums")
 
