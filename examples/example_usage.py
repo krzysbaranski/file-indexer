@@ -3,8 +3,6 @@
 Example usage of the File Indexer with various features.
 """
 
-from pathlib import Path
-
 from file_indexer import FileIndexer
 
 
@@ -78,7 +76,7 @@ def main():
 
         # Show statistics
         stats = indexer.get_stats()
-        print(f"\nDatabase Statistics:")
+        print("\nDatabase Statistics:")
         print(f"  Total files: {stats['total_files']:,}")
         print(f"  Files with checksums: {stats['files_with_checksum']:,}")
         print(f"  Files without checksums: {stats['files_without_checksum']:,}")

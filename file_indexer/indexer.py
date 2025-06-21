@@ -4,10 +4,11 @@ Core file indexing functionality using DuckDB with performance optimizations.
 
 import hashlib
 import os
+from collections.abc import Generator
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 import duckdb
 
@@ -121,8 +122,8 @@ class FileIndexer:
 
                 # Copy existing data
                 self.conn.execute("""
-                INSERT INTO files_new 
-                SELECT path, filename, checksum, modification_datetime, file_size, indexed_at 
+                INSERT INTO files_new
+                SELECT path, filename, checksum, modification_datetime, file_size, indexed_at
                 FROM files;
                 """)
 
@@ -160,10 +161,7 @@ class FileIndexer:
         if self.skip_empty_files and file_size == 0:
             return False
 
-        if self.max_checksum_size > 0 and file_size > self.max_checksum_size:
-            return False
-
-        return True
+        return not (self.max_checksum_size > 0 and file_size > self.max_checksum_size)
 
     def _calculate_checksum(self, file_path: str, algorithm: str = "sha256") -> str:
         """
@@ -239,7 +237,7 @@ class FileIndexer:
         placeholders = ",".join(["(?, ?)"] * len(path_filename_pairs))
         query = f"""
         SELECT path, filename, checksum, modification_datetime, file_size
-        FROM files 
+        FROM files
         WHERE (path, filename) IN ({placeholders})
         """
 
@@ -395,7 +393,7 @@ class FileIndexer:
             # Bulk updates
             if updates:
                 update_sql = """
-                UPDATE files 
+                UPDATE files
                 SET checksum = ?, modification_datetime = ?, file_size = ?, indexed_at = CURRENT_TIMESTAMP
                 WHERE path = ? AND filename = ?
                 """
@@ -709,7 +707,7 @@ class FileIndexer:
         """
         query = """
         SELECT * FROM files
-        WHERE checksum IS NOT NULL 
+        WHERE checksum IS NOT NULL
         AND checksum IN (
             SELECT checksum
             FROM files
@@ -850,10 +848,10 @@ class FileIndexer:
         # Find all file sizes that have multiple files
         duplicate_sizes_query = """
         SELECT file_size, COUNT(*) as file_count
-        FROM files 
+        FROM files
         WHERE checksum IS NULL
-        GROUP BY file_size 
-        HAVING COUNT(*) > 1 
+        GROUP BY file_size
+        HAVING COUNT(*) > 1
         ORDER BY file_size
         """
 
@@ -876,15 +874,15 @@ class FileIndexer:
 
             # Get all files with this size that don't have checksums
             files_query = """
-            SELECT path, filename 
-            FROM files 
+            SELECT path, filename
+            FROM files
             WHERE file_size = ? AND checksum IS NULL
             ORDER BY path, filename
             """
 
             files_with_size = self.conn.execute(files_query, [file_size]).fetchall()
             file_paths = [
-                os.path.join(path, filename) for path, filename in files_with_size
+                str(Path(path) / filename) for path, filename in files_with_size
             ]
 
             # Process in batches
@@ -948,7 +946,7 @@ class FileIndexer:
 
         try:
             update_sql = """
-            UPDATE files 
+            UPDATE files
             SET checksum = ?, indexed_at = CURRENT_TIMESTAMP
             WHERE path = ? AND filename = ?
             """
@@ -996,7 +994,7 @@ class FileIndexer:
 
         # Show final performance statistics
         stats = self.get_stats()
-        print(f"\nFinal Statistics:")
+        print("\nFinal Statistics:")
         print(f"  Total files: {stats['total_files']:,}")
         print(f"  Files with checksums: {stats['files_with_checksum']:,}")
         print(f"  Files without checksums: {stats['files_without_checksum']:,}")

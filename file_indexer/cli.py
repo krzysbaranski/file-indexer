@@ -215,7 +215,7 @@ def main() -> None:
 
             # Performance stats if available
             if stats["checksum_calculations"] > 0 or stats["checksum_reuses"] > 0:
-                print(f"\nPerformance Statistics:")
+                print("\nPerformance Statistics:")
                 print(f"  Checksum calculations: {stats['checksum_calculations']:,}")
                 print(f"  Checksum reuses: {stats['checksum_reuses']:,}")
                 print(f"  Skipped checksums: {stats['skipped_checksums']:,}")

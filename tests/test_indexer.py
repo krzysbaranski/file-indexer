@@ -435,7 +435,7 @@ class TestFileIndexer:
 
         try:
             skip_indexer.update_database(self.test_files_dir, recursive=False)
-            stats = skip_indexer.get_stats()
+            skip_indexer.get_stats()
 
             # Empty file should not have checksum
             empty_results = skip_indexer.search_files(filename_pattern="empty.txt")
@@ -450,7 +450,6 @@ class TestFileIndexer:
 
         try:
             calc_indexer.update_database(self.test_files_dir, recursive=False)
-            stats = calc_indexer.get_stats()
 
             # Empty file should have checksum
             empty_results = calc_indexer.search_files(filename_pattern="empty.txt")
