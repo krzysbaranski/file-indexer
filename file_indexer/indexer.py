@@ -26,12 +26,13 @@ def _calculate_checksum_worker(
             for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
                 hash_func.update(chunk)
         return (file_path, str(hash_func.hexdigest()))
-    except PermissionError:
+    except PermissionError as e:
         # Permission denied - return empty checksum
-        print(f"Permission denied calculating checksum: {file_path}")
+        print(f"Permission denied calculating checksum: {file_path} - {e}")
         return (file_path, "")
-    except OSError:
+    except OSError as e:
         # Other OS errors - return empty checksum
+        print(f"Error calculating checksum: {file_path} - {e}")
         return (file_path, "")
 
 
