@@ -41,7 +41,7 @@ class FileIndexer:
     def __init__(
         self,
         db_path: str = "file_index.db",
-        max_workers: int = None,
+        max_workers: int | None = None,
         max_checksum_size: int = 100 * 1024 * 1024,  # 100MB default
         skip_empty_files: bool = True,
     ):
