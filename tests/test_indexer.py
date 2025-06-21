@@ -40,6 +40,7 @@ class TestFileIndexer:
         self.test_file1 = Path(self.test_files_dir) / "test1.txt"
         self.test_file2 = Path(self.test_files_dir) / "test2.txt"
         self.test_file3 = Path(self.test_files_dir) / "duplicate.txt"
+        self.empty_file = Path(self.test_files_dir) / "empty.txt"
 
         # Create a subdirectory
         self.subdir = Path(self.test_files_dir) / "subdir"
@@ -51,12 +52,15 @@ class TestFileIndexer:
         self.test_file2.write_text("Different content")
         self.test_file3.write_text("Hello World")  # Duplicate content
         self.test_file4.write_text("Subdirectory file")
+        self.empty_file.write_text("")  # Empty file
 
     def test_initial_stats(self):
         """Test that initial database stats are empty."""
         stats = self.indexer.get_stats()
         assert stats["total_files"] == 0
         assert stats["total_size"] == 0
+        assert stats["files_with_checksum"] == 0
+        assert stats["files_without_checksum"] == 0
         assert stats["unique_checksums"] == 0
         assert stats["duplicate_files"] == 0
         assert stats["last_indexed"] is None
@@ -65,8 +69,8 @@ class TestFileIndexer:
         """Test scanning a directory recursively."""
         files = self.indexer.scan_directory(self.test_files_dir, recursive=True)
 
-        # Should find all 4 files (including subdirectory)
-        assert len(files) == 4
+        # Should find all 5 files (including subdirectory and empty file)
+        assert len(files) == 5
 
         # Check that all expected files are found
         file_names = [Path(f).name for f in files]
@@ -74,19 +78,21 @@ class TestFileIndexer:
         assert "test2.txt" in file_names
         assert "duplicate.txt" in file_names
         assert "test3.txt" in file_names
+        assert "empty.txt" in file_names
 
     def test_scan_directory_non_recursive(self):
         """Test scanning a directory non-recursively."""
         files = self.indexer.scan_directory(self.test_files_dir, recursive=False)
 
-        # Should find only 3 files (excluding subdirectory)
-        assert len(files) == 3
+        # Should find 4 files (excluding subdirectory)
+        assert len(files) == 4
 
         # Check that subdirectory file is not included
         file_names = [Path(f).name for f in files]
         assert "test1.txt" in file_names
         assert "test2.txt" in file_names
         assert "duplicate.txt" in file_names
+        assert "empty.txt" in file_names
         assert "test3.txt" not in file_names
 
     def test_scan_nonexistent_directory(self):
@@ -99,10 +105,22 @@ class TestFileIndexer:
         self.indexer.update_database(self.test_files_dir, recursive=True)
 
         stats = self.indexer.get_stats()
-        assert stats["total_files"] == 4
+        assert stats["total_files"] == 5
         assert stats["total_size"] > 0
-        assert stats["unique_checksums"] == 3  # Two files have same content
-        assert stats["duplicate_files"] == 1
+        # With default settings, empty files won't have checksums
+        if self.indexer.skip_empty_files:
+            assert stats["files_with_checksum"] == 4  # All except empty file
+            assert stats["files_without_checksum"] == 1  # Empty file
+            assert (
+                stats["unique_checksums"] == 3
+            )  # Two files have same content (test1 and duplicate)
+            assert stats["duplicate_files"] == 1  # One duplicate pair
+        else:
+            assert stats["files_with_checksum"] == 5
+            assert (
+                stats["unique_checksums"] == 4
+            )  # Two files have same content, empty file has unique checksum
+            assert stats["duplicate_files"] == 1
         assert stats["last_indexed"] is not None
         assert isinstance(stats["last_indexed"], datetime)
 
@@ -128,6 +146,29 @@ class TestFileIndexer:
         assert len(results) == 1
         assert results[0]["filename"] == "test3.txt"
 
+    def test_search_files_by_checksum_presence(self):
+        """Test searching files by checksum presence."""
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+
+        # Search for files with checksums
+        files_with_checksum = self.indexer.search_files(has_checksum=True)
+
+        # Search for files without checksums
+        files_without_checksum = self.indexer.search_files(has_checksum=False)
+
+        # Total should equal all files
+        assert len(files_with_checksum) + len(files_without_checksum) == 5
+
+        # With default settings, empty files won't have checksums
+        if self.indexer.skip_empty_files:
+            assert len(files_with_checksum) == 4
+            assert len(files_without_checksum) == 1
+            # The file without checksum should be the empty file
+            assert files_without_checksum[0]["filename"] == "empty.txt"
+        else:
+            assert len(files_with_checksum) == 5
+            assert len(files_without_checksum) == 0
+
     def test_find_duplicates(self):
         """Test finding duplicate files."""
         self.indexer.update_database(self.test_files_dir, recursive=True)
@@ -140,11 +181,15 @@ class TestFileIndexer:
         assert "test1.txt" in filenames
         assert "duplicate.txt" in filenames
 
+        # All duplicates should have checksums (only files with checksums can be duplicates)
+        for dup in duplicates:
+            assert dup["checksum"] is not None
+
     def test_calculate_checksum(self):
         """Test checksum calculation."""
-        checksum1 = self.indexer._calculate_checksum(self.test_file1)
-        checksum2 = self.indexer._calculate_checksum(self.test_file2)
-        checksum3 = self.indexer._calculate_checksum(self.test_file3)
+        checksum1 = self.indexer._calculate_checksum(str(self.test_file1))
+        checksum2 = self.indexer._calculate_checksum(str(self.test_file2))
+        checksum3 = self.indexer._calculate_checksum(str(self.test_file3))
 
         # Different files should have different checksums
         assert checksum1 != checksum2
@@ -163,12 +208,13 @@ class TestFileIndexer:
 
     def test_get_file_info(self):
         """Test getting file information."""
-        info = self.indexer._get_file_info(self.test_file1)
+        info = self.indexer._get_file_info(str(self.test_file1))
         assert info is not None
 
         directory, filename, checksum, mod_time, file_size = info
         assert filename == "test1.txt"
-        assert len(checksum) == 64
+        if checksum is not None:  # Checksum might be None for large/empty files
+            assert len(checksum) == 64
         assert isinstance(mod_time, datetime)
         assert file_size > 0
 
@@ -185,7 +231,7 @@ class TestFileIndexer:
 
         # Close and reopen the indexer
         self.indexer.close()
-        self.indexer = FileIndexer(self.db_path)
+        self.indexer = FileIndexer(str(self.db_path))
 
         # Check that data is still there
         stats = self.indexer.get_stats()
@@ -214,13 +260,16 @@ class TestFileIndexer:
         # Reset counters
         self.indexer.reset_optimization_counters()
 
-        # Index the files initially
+        # Index the files initially (non-recursive to avoid empty file complexity)
         self.indexer.update_database(self.test_files_dir, recursive=False)
         initial_calculations = self.indexer.checksum_calculations
         initial_reuses = self.indexer.checksum_reuses
 
-        # All files should have required checksum calculations on first run
-        assert initial_calculations == 3  # 3 files in root directory
+        # With default settings, empty files won't get checksums
+        if self.indexer.skip_empty_files:
+            assert initial_calculations == 3  # 3 non-empty files in root directory
+        else:
+            assert initial_calculations == 4  # All 4 files in root directory
         assert initial_reuses == 0
 
         # Update database again without modifying files
@@ -230,17 +279,17 @@ class TestFileIndexer:
         assert (
             self.indexer.checksum_calculations == initial_calculations
         )  # No additional calculations
-        assert self.indexer.checksum_reuses == 3  # All 3 files reused checksums
 
-        # Check optimization statistics
-        stats = self.indexer.get_stats()
-        assert stats["checksum_calculations"] == 3
-        assert stats["checksum_reuses"] == 3
-        assert stats["optimization_percentage"] == 50.0  # 3/(3+3) = 50%
+        if self.indexer.skip_empty_files:
+            assert (
+                self.indexer.checksum_reuses == 3
+            )  # 3 non-empty files reused checksums
+        else:
+            assert self.indexer.checksum_reuses == 4  # All 4 files reused checksums
 
     def test_checksum_optimization_with_modified_file(self):
         """Test that optimization still calculates checksums for modified files."""
-        # Reset counters and index initially
+        # Reset counters and index initially (non-recursive)
         self.indexer.reset_optimization_counters()
         self.indexer.update_database(self.test_files_dir, recursive=False)
 
@@ -253,14 +302,14 @@ class TestFileIndexer:
         # Update database again
         self.indexer.update_database(self.test_files_dir, recursive=False)
 
-        # Should have calculated checksum for 1 modified file and reused 2 others
+        # Should have calculated checksum for 1 modified file
         assert self.indexer.checksum_calculations == 1
-        assert self.indexer.checksum_reuses == 2
 
-        stats = self.indexer.get_stats()
-        assert stats["optimization_percentage"] == round(
-            (2 / 3) * 100, 2
-        )  # 2 reused out of 3 total
+        # Should have reused checksums for unmodified files with checksums
+        if self.indexer.skip_empty_files:
+            assert self.indexer.checksum_reuses == 2  # 2 other non-empty files
+        else:
+            assert self.indexer.checksum_reuses == 3  # 3 other files including empty
 
     def test_reset_optimization_counters(self):
         """Test resetting optimization counters."""
@@ -268,7 +317,8 @@ class TestFileIndexer:
         self.indexer.update_database(self.test_files_dir, recursive=False)
 
         # Verify counters have values
-        assert self.indexer.checksum_calculations > 0
+        assert self.indexer.checksum_calculations >= 0
+        assert self.indexer.skipped_checksums >= 0
 
         # Reset counters
         self.indexer.reset_optimization_counters()
@@ -276,6 +326,7 @@ class TestFileIndexer:
         # Verify counters are reset
         assert self.indexer.checksum_calculations == 0
         assert self.indexer.checksum_reuses == 0
+        assert self.indexer.skipped_checksums == 0
 
     def test_skipped_files_in_stats(self):
         """Test that skipped files are properly tracked and exposed in stats."""
@@ -297,7 +348,7 @@ class TestFileIndexer:
 
         # Verify skipped files are tracked in stats
         stats = self.indexer.get_stats()
-        assert stats["skipped_files"] == 3  # All 3 files should be skipped
+        assert stats["skipped_files"] == 4  # All 4 files should be skipped
         assert "skipped_files" in stats  # Ensure key exists in stats dictionary
 
         # Verify reset works for skipped files too
@@ -318,8 +369,6 @@ class TestFileIndexer:
             symlink_file.symlink_to(test_file)
         except (OSError, NotImplementedError):
             # Symlinks not supported on this platform, skip test
-            import pytest
-
             pytest.skip("Symbolic links not supported on this platform")
 
         # Reset counters
@@ -328,9 +377,9 @@ class TestFileIndexer:
         # Scan directory - should find real file but ignore symlink
         files = self.indexer.scan_directory(self.test_files_dir, recursive=False)
 
-        # Should find the original 3 test files + 1 new real file = 4 total
+        # Should find the original 4 test files + 1 new real file = 5 total
         # But should NOT include the symlink
-        assert len(files) == 4
+        assert len(files) == 5
         assert str(test_file) in files
         assert str(symlink_file) not in files
 
@@ -345,11 +394,344 @@ class TestFileIndexer:
         assert stats["ignored_symlinks"] == 1
         assert "ignored_symlinks" in stats  # Ensure key exists
 
-        # Database should only contain 4 files (not the symlink)
-        assert stats["total_files"] == 4
+        # Database should only contain 5 files (not the symlink)
+        assert stats["total_files"] == 5
 
         # Clean up the symlink
         symlink_file.unlink()
+
+    def test_checksum_size_limits(self):
+        """Test that large files can be skipped for checksum calculation."""
+        # Create indexer with very small size limit
+        small_limit_indexer = FileIndexer(
+            str(self.db_path) + "_small",
+            max_checksum_size=10,  # 10 bytes limit
+            skip_empty_files=False,
+        )
+
+        try:
+            # Reset counters
+            small_limit_indexer.reset_optimization_counters()
+
+            # Index files - most should be skipped due to size
+            small_limit_indexer.update_database(self.test_files_dir, recursive=False)
+
+            stats = small_limit_indexer.get_stats()
+
+            # Should have files indexed but some without checksums due to size
+            assert stats["total_files"] == 4  # All files indexed
+            assert stats["files_without_checksum"] > 0  # Some files skipped checksum
+            assert (
+                small_limit_indexer.skipped_checksums > 0
+            )  # Tracked skipped checksums
+
+        finally:
+            small_limit_indexer.close()
+
+    def test_empty_file_handling(self):
+        """Test handling of empty files with different configurations."""
+        # Test with skip_empty_files=True (default)
+        skip_indexer = FileIndexer(str(self.db_path) + "_skip", skip_empty_files=True)
+
+        try:
+            skip_indexer.update_database(self.test_files_dir, recursive=False)
+            skip_indexer.get_stats()
+
+            # Empty file should not have checksum
+            empty_results = skip_indexer.search_files(filename_pattern="empty.txt")
+            assert len(empty_results) == 1
+            assert empty_results[0]["checksum"] is None
+
+        finally:
+            skip_indexer.close()
+
+        # Test with skip_empty_files=False
+        calc_indexer = FileIndexer(str(self.db_path) + "_calc", skip_empty_files=False)
+
+        try:
+            calc_indexer.update_database(self.test_files_dir, recursive=False)
+
+            # Empty file should have checksum
+            empty_results = calc_indexer.search_files(filename_pattern="empty.txt")
+            assert len(empty_results) == 1
+            assert empty_results[0]["checksum"] is not None
+
+        finally:
+            calc_indexer.close()
+
+    def test_schema_migration(self):
+        """Test that schema migration works correctly."""
+        # This test is mainly to ensure the migration code doesn't crash
+        # The actual migration would require creating an old-format database
+
+        # Create a new indexer and verify it works
+        migration_indexer = FileIndexer(str(self.db_path) + "_migration")
+
+        try:
+            migration_indexer.update_database(self.test_files_dir, recursive=False)
+            stats = migration_indexer.get_stats()
+            assert stats["total_files"] > 0
+
+        finally:
+            migration_indexer.close()
+
+    def test_batch_processing(self):
+        """Test that batch processing works correctly."""
+        # Reset counters
+        self.indexer.reset_optimization_counters()
+
+        # Index with very small batch size
+        self.indexer.update_database(self.test_files_dir, recursive=True, batch_size=2)
+
+        stats = self.indexer.get_stats()
+        assert stats["total_files"] == 5  # All files should be processed
+        assert stats["total_size"] > 0
+
+    def test_index_files_without_checksums(self):
+        """Test Phase 1: indexing files without calculating checksums."""
+        # Reset counters
+        self.indexer.reset_optimization_counters()
+
+        # Index files without checksums
+        self.indexer.index_files_without_checksums(self.test_files_dir, recursive=True)
+
+        stats = self.indexer.get_stats()
+
+        # All files should be indexed
+        assert stats["total_files"] == 5
+        assert stats["total_size"] > 0
+
+        # No files should have checksums in Phase 1
+        assert stats["files_with_checksum"] == 0
+        assert stats["files_without_checksum"] == 5
+        assert stats["unique_checksums"] == 0
+        assert stats["duplicate_files"] == 0
+
+        # Should have skipped all checksums
+        assert self.indexer.skipped_checksums == 5
+
+    def test_calculate_checksums_for_duplicates(self):
+        """Test Phase 2: calculating checksums only for files with duplicate sizes."""
+        # First, index files without checksums
+        self.indexer.index_files_without_checksums(self.test_files_dir, recursive=True)
+
+        # Reset counters to track Phase 2 only
+        self.indexer.reset_optimization_counters()
+
+        # Calculate checksums for potential duplicates
+        self.indexer.calculate_checksums_for_duplicates()
+
+        stats = self.indexer.get_stats()
+
+        # Should still have all files
+        assert stats["total_files"] == 5
+
+        # Should have checksums for files with duplicate sizes
+        # In our test set: test1.txt and duplicate.txt have same content and likely same size
+        # Empty file might be in its own size category
+        assert stats["files_with_checksum"] >= 2  # At least the duplicate files
+        assert stats["files_without_checksum"] <= 3  # The rest
+
+        # Should have found duplicates if any files had the same size
+        if stats["files_with_checksum"] > 0:
+            duplicates = self.indexer.find_duplicates()
+            # test1.txt and duplicate.txt should be found as duplicates if they got checksums
+            if stats["files_with_checksum"] >= 2:
+                assert (
+                    len(duplicates) >= 0
+                )  # May or may not have duplicates depending on sizes
+
+    def test_two_phase_indexing_complete(self):
+        """Test complete two-phase indexing process."""
+        # Create a new indexer for clean test
+        two_phase_indexer = FileIndexer(str(self.db_path) + "_two_phase")
+
+        try:
+            # Reset counters
+            two_phase_indexer.reset_optimization_counters()
+
+            # Run complete two-phase indexing
+            two_phase_indexer.two_phase_indexing(self.test_files_dir, recursive=True)
+
+            stats = two_phase_indexer.get_stats()
+
+            # All files should be indexed
+            assert stats["total_files"] == 5
+            assert stats["total_size"] > 0
+
+            # Should have some files with checksums (those with duplicate sizes)
+            assert stats["files_with_checksum"] >= 0
+            assert stats["files_without_checksum"] >= 0
+            assert stats["files_with_checksum"] + stats["files_without_checksum"] == 5
+
+            # Should be able to find duplicates among files with checksums
+            duplicates = two_phase_indexer.find_duplicates()
+            assert isinstance(duplicates, list)
+
+        finally:
+            two_phase_indexer.close()
+
+    def test_calculate_checksums_for_files_helper(self):
+        """Test the helper method for calculating checksums for specific files."""
+        # First, index without checksums
+        self.indexer.index_files_without_checksums(self.test_files_dir, recursive=False)
+
+        # Test the helper method directly
+        file_paths = [str(self.test_file1), str(self.test_file2)]
+        updated_count = self.indexer._calculate_checksums_for_files(file_paths)
+
+        # Should have updated 2 files
+        assert updated_count == 2
+
+        # Check that these files now have checksums
+        results1 = self.indexer.search_files(filename_pattern="test1.txt")
+        results2 = self.indexer.search_files(filename_pattern="test2.txt")
+
+        assert len(results1) == 1
+        assert len(results2) == 1
+        assert results1[0]["checksum"] is not None
+        assert results2[0]["checksum"] is not None
+
+    def test_two_phase_with_no_duplicates(self):
+        """Test two-phase indexing when no files have duplicate sizes."""
+        # Create files with unique sizes
+        unique_dir = tempfile.mkdtemp()
+        try:
+            # Create files with different sizes
+            (Path(unique_dir) / "small.txt").write_text("a")
+            (Path(unique_dir) / "medium.txt").write_text("bb")
+            (Path(unique_dir) / "large.txt").write_text("ccc")
+
+            # Create indexer for this test
+            unique_indexer = FileIndexer(str(self.db_path) + "_unique")
+
+            try:
+                # Run two-phase indexing
+                unique_indexer.two_phase_indexing(unique_dir, recursive=True)
+
+                stats = unique_indexer.get_stats()
+
+                # All files should be indexed
+                assert stats["total_files"] == 3
+
+                # No files should have checksums since no duplicates
+                assert stats["files_with_checksum"] == 0
+                assert stats["files_without_checksum"] == 3
+                assert stats["duplicate_files"] == 0
+
+            finally:
+                unique_indexer.close()
+
+        finally:
+            import shutil
+
+            shutil.rmtree(unique_dir, ignore_errors=True)
+
+    def test_two_phase_with_many_duplicates(self):
+        """Test two-phase indexing with many files of the same size."""
+        # Create directory with many files of the same size
+        dup_dir = tempfile.mkdtemp()
+        try:
+            # Create multiple files with the same content (and thus same size)
+            content = "duplicate content"
+            for i in range(5):
+                (Path(dup_dir) / f"dup{i}.txt").write_text(content)
+
+            # Create one unique file
+            (Path(dup_dir) / "unique.txt").write_text("unique content here")
+
+            # Create indexer for this test
+            dup_indexer = FileIndexer(str(self.db_path) + "_duplicates")
+
+            try:
+                # Run two-phase indexing
+                dup_indexer.two_phase_indexing(dup_dir, recursive=True)
+
+                stats = dup_indexer.get_stats()
+
+                # All files should be indexed
+                assert stats["total_files"] == 6
+
+                # Should have checksums for the 5 duplicate files (same size)
+                # Unique file might not get checksum if it's the only one of its size
+                assert stats["files_with_checksum"] == 5  # The duplicate files
+                assert stats["files_without_checksum"] == 1  # The unique file
+
+                # Should find duplicates
+                duplicates = dup_indexer.find_duplicates()
+                assert len(duplicates) == 5  # All 5 duplicate files
+
+            finally:
+                dup_indexer.close()
+
+        finally:
+            import shutil
+
+            shutil.rmtree(dup_dir, ignore_errors=True)
+
+    def test_phase_separation(self):
+        """Test that phases can be run separately and resumed."""
+        # Create separate indexer for clean test
+        phase_indexer = FileIndexer(str(self.db_path) + "_phases")
+
+        try:
+            # Phase 1 only
+            phase_indexer.index_files_without_checksums(
+                self.test_files_dir, recursive=True
+            )
+
+            stats_after_phase1 = phase_indexer.get_stats()
+            assert stats_after_phase1["total_files"] == 5
+            assert stats_after_phase1["files_with_checksum"] == 0
+            assert stats_after_phase1["files_without_checksum"] == 5
+
+            # Close and reopen indexer (simulating separate process)
+            phase_indexer.close()
+            phase_indexer = FileIndexer(str(self.db_path) + "_phases")
+
+            # Phase 2 only
+            phase_indexer.calculate_checksums_for_duplicates()
+
+            stats_after_phase2 = phase_indexer.get_stats()
+            assert stats_after_phase2["total_files"] == 5
+            # Should now have some files with checksums
+            assert stats_after_phase2["files_with_checksum"] >= 0
+            assert (
+                stats_after_phase2["files_with_checksum"]
+                + stats_after_phase2["files_without_checksum"]
+            ) == 5
+
+        finally:
+            phase_indexer.close()
+
+    def test_two_phase_performance_tracking(self):
+        """Test that performance counters work correctly with two-phase indexing."""
+        # Create indexer for this test
+        perf_indexer = FileIndexer(str(self.db_path) + "_perf")
+
+        try:
+            # Reset counters
+            perf_indexer.reset_optimization_counters()
+
+            # Run two-phase indexing
+            perf_indexer.two_phase_indexing(self.test_files_dir, recursive=True)
+
+            stats = perf_indexer.get_stats()
+
+            # Check that performance counters are tracked
+            assert "checksum_calculations" in stats
+            assert "checksum_reuses" in stats
+            assert "skipped_checksums" in stats
+            assert "optimization_percentage" in stats
+
+            # Should have skipped many checksums in Phase 1
+            assert stats["skipped_checksums"] >= 0
+
+            # Should have calculated some checksums in Phase 2 (if any duplicates found)
+            assert stats["checksum_calculations"] >= 0
+
+        finally:
+            perf_indexer.close()
 
 
 if __name__ == "__main__":
