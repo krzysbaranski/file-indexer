@@ -1416,14 +1416,14 @@ class TestFileIndexer:
 
         # Create nested directories: level1/level2/level3/level4/level5
         for i in range(5):
-            current_dir = current_dir / f"level{i+1}"
+            current_dir = current_dir / f"level{i + 1}"
             current_dir.mkdir()
             deep_dirs.append(current_dir)
 
             # Add files at each level
             for j in range(2):
-                file_path = current_dir / f"file_L{i+1}_{j+1}.txt"
-                file_path.write_text(f"Content at level {i+1}, file {j+1}")
+                file_path = current_dir / f"file_L{i + 1}_{j + 1}.txt"
+                file_path.write_text(f"Content at level {i + 1}, file {j + 1}")
 
         # Index all files
         self.indexer.update_database(self.test_files_dir, recursive=True)
