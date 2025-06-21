@@ -27,7 +27,8 @@ def _calculate_checksum_worker(
                 hash_func.update(chunk)
         return (file_path, str(hash_func.hexdigest()))
     except PermissionError:
-        # Permission denied - return empty checksum silently
+        # Permission denied - return empty checksum
+        print(f"Permission denied calculating checksum: {file_path}")
         return (file_path, "")
     except OSError:
         # Other OS errors - return empty checksum
@@ -359,8 +360,7 @@ class FileIndexer:
                     if checksum:  # Only store successful checksums
                         checksums[file_path] = checksum
                         self.checksum_calculations += 1
-                    else:
-                        print(f"Failed to calculate checksum for {file_path}")
+                    # Note: Permission errors are already reported by the worker process
                 except Exception as e:
                     file_path = future_to_path[future]
                     print(f"Error calculating checksum for {file_path}: {e}")
@@ -852,7 +852,9 @@ class FileIndexer:
 
             return (directory, filename, checksum, modification_datetime, file_size)
         except PermissionError:
-            # Permission denied - return None silently
+            # Permission denied - return None and report
+            print(f"Permission denied: {file_path}")
+            self.permission_errors += 1
             return None
         except OSError as e:
             print(f"Error accessing file {file_path}: {e}")
