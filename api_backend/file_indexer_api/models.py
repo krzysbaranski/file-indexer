@@ -3,44 +3,43 @@ Pydantic models for API request and response structures.
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FileRecord(BaseModel):
     """Model for a file record from the database."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     path: str
     filename: str
-    checksum: Optional[str] = None
+    checksum: str | None = None
     modification_datetime: datetime
     file_size: int
     indexed_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class SearchRequest(BaseModel):
     """Model for file search requests."""
 
-    filename_pattern: Optional[str] = Field(
+    filename_pattern: str | None = Field(
         None, description="Pattern to match filenames (supports SQL LIKE patterns)"
     )
-    path_pattern: Optional[str] = Field(
+    path_pattern: str | None = Field(
         None, description="Pattern to match file paths (supports SQL LIKE patterns)"
     )
-    checksum: Optional[str] = Field(None, description="Exact checksum to match")
-    has_checksum: Optional[bool] = Field(
+    checksum: str | None = Field(None, description="Exact checksum to match")
+    has_checksum: bool | None = Field(
         None, description="Filter by whether files have checksums"
     )
-    min_size: Optional[int] = Field(None, description="Minimum file size in bytes")
-    max_size: Optional[int] = Field(None, description="Maximum file size in bytes")
-    modified_after: Optional[datetime] = Field(
+    min_size: int | None = Field(None, description="Minimum file size in bytes")
+    max_size: int | None = Field(None, description="Maximum file size in bytes")
+    modified_after: datetime | None = Field(
         None, description="Files modified after this date"
     )
-    modified_before: Optional[datetime] = Field(
+    modified_before: datetime | None = Field(
         None, description="Files modified before this date"
     )
     limit: int = Field(
@@ -88,8 +87,8 @@ class DatabaseStats(BaseModel):
     average_file_size: float
     largest_file_size: int
     smallest_file_size: int
-    most_recent_modification: Optional[datetime]
-    oldest_modification: Optional[datetime]
+    most_recent_modification: datetime | None
+    oldest_modification: datetime | None
     unique_directories: int
 
 
@@ -123,7 +122,7 @@ class HealthCheck(BaseModel):
 
     status: str
     database_connected: bool
-    database_path: Optional[str]
+    database_path: str | None
     total_files: int
     api_version: str
 
@@ -132,4 +131,4 @@ class ErrorResponse(BaseModel):
     """Model for error responses."""
 
     error: str
-    detail: Optional[str] = None
+    detail: str | None = None

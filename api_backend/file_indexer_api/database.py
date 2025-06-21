@@ -3,9 +3,7 @@ Database service layer for querying the file index DuckDB database.
 """
 
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
 
 import duckdb
 
@@ -32,7 +30,7 @@ class DatabaseService:
             db_path: Path to the DuckDB database file
         """
         self.db_path = db_path
-        self.conn: Optional[duckdb.DuckDBPyConnection] = None
+        self.conn: duckdb.DuckDBPyConnection | None = None
 
     def connect(self) -> None:
         """Connect to the database."""
@@ -114,7 +112,7 @@ class DatabaseService:
         # Get the actual results with pagination
         data_query = f"""
         SELECT path, filename, checksum, modification_datetime, file_size, indexed_at
-        FROM files 
+        FROM files
         WHERE {where_clause}
         ORDER BY modification_datetime DESC, path, filename
         LIMIT ? OFFSET ?
@@ -153,18 +151,18 @@ class DatabaseService:
         query = """
         WITH duplicate_checksums AS (
             SELECT checksum, file_size, COUNT(*) as file_count
-            FROM files 
+            FROM files
             WHERE checksum IS NOT NULL
             GROUP BY checksum, file_size
             HAVING COUNT(*) >= ?
         )
-        SELECT 
-            f.checksum, 
+        SELECT
+            f.checksum,
             f.file_size,
             dc.file_count,
-            f.path, 
-            f.filename, 
-            f.modification_datetime, 
+            f.path,
+            f.filename,
+            f.modification_datetime,
             f.indexed_at
         FROM files f
         JOIN duplicate_checksums dc ON f.checksum = dc.checksum AND f.file_size = dc.file_size
@@ -203,7 +201,7 @@ class DatabaseService:
 
         # Basic counts and sizes
         basic_stats = self.conn.execute("""
-        SELECT 
+        SELECT
             COUNT(*) as total_files,
             COALESCE(SUM(file_size), 0) as total_size,
             COUNT(checksum) as files_with_checksums,
@@ -220,12 +218,12 @@ class DatabaseService:
         duplicate_stats = self.conn.execute("""
         WITH duplicate_checksums AS (
             SELECT checksum, COUNT(*) as file_count
-            FROM files 
+            FROM files
             WHERE checksum IS NOT NULL
             GROUP BY checksum
             HAVING COUNT(*) > 1
         )
-        SELECT 
+        SELECT
             COUNT(*) as duplicate_groups,
             COALESCE(SUM(file_count), 0) as duplicate_files
         FROM duplicate_checksums
@@ -258,21 +256,21 @@ class DatabaseService:
 
         # File size distribution
         size_distribution = self.conn.execute("""
-        SELECT 
+        SELECT
             size_range,
             COUNT(*) as count,
             SUM(file_size) as total_size
         FROM (
-            SELECT 
+            SELECT
                 file_size,
-                CASE 
+                CASE
                     WHEN file_size = 0 THEN '0 bytes'
                     WHEN file_size < 1024 THEN '< 1KB'
                     WHEN file_size < 1024*1024 THEN '1KB - 1MB'
                     WHEN file_size < 1024*1024*1024 THEN '1MB - 1GB'
                     ELSE '> 1GB'
                 END as size_range,
-                CASE 
+                CASE
                     WHEN file_size = 0 THEN 1
                     WHEN file_size < 1024 THEN 2
                     WHEN file_size < 1024*1024 THEN 3
@@ -288,16 +286,16 @@ class DatabaseService:
         # File extension statistics
         extension_stats = self.conn.execute("""
         WITH extensions AS (
-            SELECT 
-                CASE 
-                    WHEN filename LIKE '%.%' THEN 
+            SELECT
+                CASE
+                    WHEN filename LIKE '%.%' THEN
                         LOWER(SUBSTR(filename, LENGTH(filename) - LENGTH(REVERSE(SUBSTR(REVERSE(filename), 1, STRPOS(REVERSE(filename), '.') - 1))) + 1))
                     ELSE '(no extension)'
                 END as extension,
                 file_size
             FROM files
         )
-        SELECT 
+        SELECT
             extension,
             COUNT(*) as count,
             SUM(file_size) as total_size,
@@ -310,7 +308,7 @@ class DatabaseService:
 
         # Modification timeline (files per month for last 12 months)
         timeline = self.conn.execute("""
-        SELECT 
+        SELECT
             DATE_TRUNC('month', modification_datetime) as month,
             COUNT(*) as count,
             SUM(file_size) as total_size

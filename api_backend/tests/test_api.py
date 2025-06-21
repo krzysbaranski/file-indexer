@@ -50,7 +50,7 @@ def test_root_endpoint(client):
     assert data["version"] == "0.1.0"
 
 
-def test_health_check(client, mock_db_service):
+def test_health_check(client):
     """Test the health check endpoint."""
     response = client.get("/health/")
     assert response.status_code == 200

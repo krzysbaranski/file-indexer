@@ -42,7 +42,7 @@ def override_get_database_service() -> DatabaseService:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> Any:
+async def lifespan(_app: FastAPI) -> Any:
     """Application lifespan manager."""
     global db_service
 
@@ -101,7 +101,7 @@ app.include_router(stats_router)
 
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request: Any, exc: Exception) -> JSONResponse:
+async def general_exception_handler(_request: Any, exc: Exception) -> JSONResponse:
     """Global exception handler."""
     logger.error(f"Unhandled exception: {exc}")
     return JSONResponse(

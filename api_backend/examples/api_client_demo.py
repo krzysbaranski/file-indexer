@@ -6,9 +6,7 @@ This script demonstrates various API endpoints and how to use them
 programmatically with the requests library.
 """
 
-import json
-import time
-from typing import Any, Dict
+from typing import Any
 
 import requests
 
@@ -21,7 +19,7 @@ class FileIndexerClient:
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Check API health."""
         response = self.session.get(f"{self.base_url}/health/")
         response.raise_for_status()
@@ -36,7 +34,7 @@ class FileIndexerClient:
         max_size: int = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Search for files using GET parameters."""
         params = {"limit": limit, "offset": offset}
 
@@ -55,26 +53,26 @@ class FileIndexerClient:
         response.raise_for_status()
         return response.json()
 
-    def search_files_advanced(self, search_request: Dict[str, Any]) -> Dict[str, Any]:
+    def search_files_advanced(self, search_request: dict[str, Any]) -> dict[str, Any]:
         """Search for files using POST with advanced parameters."""
         response = self.session.post(f"{self.base_url}/search/", json=search_request)
         response.raise_for_status()
         return response.json()
 
-    def find_duplicates(self, min_group_size: int = 2) -> Dict[str, Any]:
+    def find_duplicates(self, min_group_size: int = 2) -> dict[str, Any]:
         """Find duplicate files."""
         params = {"min_group_size": min_group_size}
         response = self.session.get(f"{self.base_url}/duplicates/", params=params)
         response.raise_for_status()
         return response.json()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get database statistics."""
         response = self.session.get(f"{self.base_url}/stats/")
         response.raise_for_status()
         return response.json()
 
-    def get_visualization_data(self) -> Dict[str, Any]:
+    def get_visualization_data(self) -> dict[str, Any]:
         """Get visualization data."""
         response = self.session.get(f"{self.base_url}/stats/visualization")
         response.raise_for_status()
@@ -202,7 +200,7 @@ def main():
                 f"  {dist['size_range']}: {dist['count']:,} files ({format_file_size(dist['total_size'])})"
             )
 
-        print(f"\nTop file extensions:")
+        print("\nTop file extensions:")
         for ext in viz_data["extension_stats"][:5]:
             print(
                 f"  {ext['extension']}: {ext['count']:,} files ({format_file_size(ext['total_size'])})"
