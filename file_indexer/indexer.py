@@ -44,6 +44,7 @@ class FileIndexer:
         max_workers: int | None = None,
         max_checksum_size: int = 100 * 1024 * 1024,  # 100MB default
         skip_empty_files: bool = True,
+        use_parallel_processing: bool = True,
     ):
         """
         Initialize the FileIndexer with a DuckDB database.
@@ -53,12 +54,15 @@ class FileIndexer:
             max_workers: Maximum number of worker processes for parallel operations
             max_checksum_size: Maximum file size in bytes to calculate checksums for (0 = no limit)
             skip_empty_files: Whether to skip checksum calculation for empty files
+            use_parallel_processing: Whether to use parallel processing for checksums (False forces sequential)
         """
         self.db_path = db_path
         self.conn = duckdb.connect(db_path)
         self.max_workers = max_workers or min(32, (os.cpu_count() or 1) + 4)
         self.max_checksum_size = max_checksum_size
         self.skip_empty_files = skip_empty_files
+        # Use parallel processing only if explicitly enabled and max_workers > 1
+        self.use_parallel_processing = use_parallel_processing and self.max_workers > 1
         self._create_table()
         self._migrate_schema()
 
@@ -343,30 +347,58 @@ class FileIndexer:
         return files_needing_checksums, files_to_update, files_to_insert
 
     def _calculate_checksums_parallel(self, file_paths: list[str]) -> dict[str, str]:
-        """Calculate checksums for multiple files in parallel."""
+        """Calculate checksums for multiple files in parallel, with fallback to sequential processing."""
         if not file_paths:
             return {}
 
+        # Use sequential processing if parallel processing is disabled or max_workers is 1
+        if not self.use_parallel_processing:
+            return self._calculate_checksums_sequential(file_paths)
+
         checksums = {}
 
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-            # Submit all checksum calculations
-            future_to_path = {
-                executor.submit(_calculate_checksum_worker, file_path): file_path
-                for file_path in file_paths
-            }
+        # Try parallel processing first
+        try:
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all checksum calculations
+                future_to_path = {
+                    executor.submit(_calculate_checksum_worker, file_path): file_path
+                    for file_path in file_paths
+                }
 
-            # Collect results as they complete
-            for future in as_completed(future_to_path):
-                try:
-                    file_path, checksum = future.result()
-                    if checksum:  # Only store successful checksums
-                        checksums[file_path] = checksum
-                        self.checksum_calculations += 1
-                    # Note: Permission errors are already reported by the worker process
-                except Exception as e:
-                    file_path = future_to_path[future]
-                    print(f"Error calculating checksum for {file_path}: {e}")
+                # Collect results as they complete
+                for future in as_completed(future_to_path):
+                    try:
+                        file_path, checksum = future.result()
+                        if checksum:  # Only store successful checksums
+                            checksums[file_path] = checksum
+                            self.checksum_calculations += 1
+                        # Note: Permission errors are already reported by the worker process
+                    except Exception as e:
+                        file_path = future_to_path[future]
+                        print(f"Error calculating checksum for {file_path}: {e}")
+
+        except (PermissionError, OSError) as e:
+            # Fall back to sequential processing when parallel processing is not available
+            print(
+                f"Parallel processing not available ({e}), falling back to sequential processing..."
+            )
+            checksums = self._calculate_checksums_sequential(file_paths)
+
+        return checksums
+
+    def _calculate_checksums_sequential(self, file_paths: list[str]) -> dict[str, str]:
+        """Calculate checksums for multiple files sequentially (fallback method)."""
+        checksums = {}
+
+        for file_path in file_paths:
+            try:
+                _, checksum = _calculate_checksum_worker(file_path)
+                if checksum:  # Only store successful checksums
+                    checksums[file_path] = checksum
+                    self.checksum_calculations += 1
+            except Exception as e:
+                print(f"Error calculating checksum for {file_path}: {e}")
 
         return checksums
 

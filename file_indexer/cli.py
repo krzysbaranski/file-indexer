@@ -75,6 +75,11 @@ def main() -> None:
         help="Don't skip checksum calculation for empty files",
     )
     parser.add_argument(
+        "--sequential",
+        action="store_true",
+        help="Force sequential processing instead of parallel (useful for systems with restricted multiprocessing)",
+    )
+    parser.add_argument(
         "--two-phase",
         help="Perform two-phase indexing: first index without checksums, then calculate checksums for files with duplicate sizes",
     )
@@ -120,6 +125,7 @@ def main() -> None:
         max_workers=args.max_workers,
         max_checksum_size=max_checksum_size,
         skip_empty_files=skip_empty_files,
+        use_parallel_processing=not args.sequential,
     )
 
     try:
