@@ -22,16 +22,16 @@ def _calculate_checksum_worker(
     """
     try:
         path_obj = Path(file_path)
-        
+
         # Safety check: Skip symlinks and special files
         if path_obj.is_symlink():
             print(f"Skipping symlink during checksum calculation: {file_path}")
             return (file_path, "")
-            
+
         if not path_obj.is_file():
             print(f"Skipping special file during checksum calculation: {file_path}")
             return (file_path, "")
-        
+
         hash_func: Any = getattr(hashlib, algorithm)()
         with path_obj.open("rb") as f:
             # Read file in larger chunks for better performance
@@ -955,7 +955,7 @@ class FileIndexer:
                 # Skip empty files - this shouldn't happen due to the outer query filter,
                 # but adding this as a safety check
                 continue
-                
+
             files_query = """
             SELECT path, filename
             FROM files
@@ -985,11 +985,17 @@ class FileIndexer:
 
         # Report filtered files during checksum calculation
         if self.ignored_symlinks > 0:
-            print(f"Ignored {self.ignored_symlinks} symbolic links during checksum calculation")
+            print(
+                f"Ignored {self.ignored_symlinks} symbolic links during checksum calculation"
+            )
         if self.ignored_special_files > 0:
-            print(f"Ignored {self.ignored_special_files} special files during checksum calculation")
+            print(
+                f"Ignored {self.ignored_special_files} special files during checksum calculation"
+            )
         if self.skipped_checksums > 0:
-            print(f"Skipped checksums for {self.skipped_checksums} files (empty or too large)")  
+            print(
+                f"Skipped checksums for {self.skipped_checksums} files (empty or too large)"
+            )
 
         # Show final statistics
         stats = self.get_stats()
@@ -1017,18 +1023,18 @@ class FileIndexer:
         for file_path in file_paths:
             try:
                 path_obj = Path(file_path)
-                
+
                 # Skip symbolic links
                 if path_obj.is_symlink():
                     self.ignored_symlinks += 1
                     continue
-                    
+
                 # Skip special files (device files, pipes, sockets, etc.)
                 # Only process regular files
                 if not path_obj.is_file():
                     self.ignored_special_files += 1
                     continue
-                
+
                 # Skip empty files if skip_empty_files is True
                 if self.skip_empty_files:
                     try:
@@ -1039,9 +1045,9 @@ class FileIndexer:
                     except (OSError, PermissionError):
                         # If we can't get file size, let it through and handle later
                         pass
-                    
+
                 valid_file_paths.append(file_path)
-                
+
             except (OSError, PermissionError):
                 # If we can't check the file type, skip it
                 # This will be caught later during checksum calculation
@@ -1149,18 +1155,18 @@ class FileIndexer:
         """
         try:
             path_obj = Path(file_path)
-            
+
             # Skip symbolic links
             if path_obj.is_symlink():
                 self.ignored_symlinks += 1
                 return None
-                
+
             # Skip special files (device files, pipes, sockets, etc.)
             # Only process regular files
             if not path_obj.is_file():
                 self.ignored_special_files += 1
                 return None
-            
+
             stat_info = path_obj.stat()
 
             directory = str(path_obj.parent)

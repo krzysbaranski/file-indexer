@@ -50,10 +50,10 @@ class TestCLI:
         """Test parsing invalid size strings."""
         with pytest.raises(ValueError):
             parse_size("invalid")
-        
+
         with pytest.raises(ValueError):
             parse_size("100XB")  # Invalid unit
-        
+
         with pytest.raises(ValueError):
             parse_size("abc123")  # Invalid format
 
@@ -63,21 +63,23 @@ class TestCLI:
         assert parse_size("1gb") == 1024 * 1024 * 1024
         assert parse_size("1Mb") == 1024 * 1024
 
-    @patch('file_indexer.cli.FileIndexer')
+    @patch("file_indexer.cli.FileIndexer")
     def test_main_scan_operation(self, mock_indexer_class):
         """Test main function with scan operation."""
         # Mock the FileIndexer class
         mock_indexer = MagicMock()
         mock_indexer_class.return_value = mock_indexer
-        
+
         # Test arguments
         test_args = [
-            'file-indexer',  # Program name
-            '--scan', '/test/dir',
-            '--db', 'test.db'
+            "file-indexer",  # Program name
+            "--scan",
+            "/test/dir",
+            "--db",
+            "test.db",
         ]
-        
-        with patch.object(sys, 'argv', test_args):
+
+        with patch.object(sys, "argv", test_args):
             try:
                 main()
                 # Verify that FileIndexer was called with correct arguments
@@ -88,33 +90,29 @@ class TestCLI:
                 # Exit code 0 is success
                 assert e.code == 0
 
-    @patch('file_indexer.cli.FileIndexer')
+    @patch("file_indexer.cli.FileIndexer")
     def test_main_stats_operation(self, mock_indexer_class):
         """Test main function with stats operation."""
         # Mock the FileIndexer class
         mock_indexer = MagicMock()
         mock_indexer.get_stats.return_value = {
-            'total_files': 100,
-            'total_size': 1024000,
-            'files_with_checksum': 90,
-            'files_without_checksum': 10,
-            'unique_checksums': 85,
-            'duplicate_files': 5,
-            'last_indexed': '2024-01-01 12:00:00',
-            'checksum_calculations': 0,
-            'checksum_reuses': 0,
-            'optimization_percentage': 0
+            "total_files": 100,
+            "total_size": 1024000,
+            "files_with_checksum": 90,
+            "files_without_checksum": 10,
+            "unique_checksums": 85,
+            "duplicate_files": 5,
+            "last_indexed": "2024-01-01 12:00:00",
+            "checksum_calculations": 0,
+            "checksum_reuses": 0,
+            "optimization_percentage": 0,
         }
         mock_indexer_class.return_value = mock_indexer
-        
+
         # Test arguments
-        test_args = [
-            'file-indexer',
-            '--stats',
-            '--db', 'test.db'
-        ]
-        
-        with patch.object(sys, 'argv', test_args):
+        test_args = ["file-indexer", "--stats", "--db", "test.db"]
+
+        with patch.object(sys, "argv", test_args):
             try:
                 main()
                 # Verify that get_stats was called
@@ -124,21 +122,17 @@ class TestCLI:
                 # Exit code 0 is success
                 assert e.code == 0
 
-    @patch('file_indexer.cli.FileIndexer')
+    @patch("file_indexer.cli.FileIndexer")
     def test_main_two_phase_operation(self, mock_indexer_class):
         """Test main function with two-phase operation."""
         # Mock the FileIndexer class
         mock_indexer = MagicMock()
         mock_indexer_class.return_value = mock_indexer
-        
+
         # Test arguments
-        test_args = [
-            'file-indexer',
-            '--two-phase', '/test/dir',
-            '--db', 'test.db'
-        ]
-        
-        with patch.object(sys, 'argv', test_args):
+        test_args = ["file-indexer", "--two-phase", "/test/dir", "--db", "test.db"]
+
+        with patch.object(sys, "argv", test_args):
             try:
                 main()
                 # Verify that two_phase_indexing was called
@@ -150,9 +144,9 @@ class TestCLI:
 
     def test_main_help(self):
         """Test that help argument works."""
-        test_args = ['file-indexer', '--help']
-        
-        with patch.object(sys, 'argv', test_args):
+        test_args = ["file-indexer", "--help"]
+
+        with patch.object(sys, "argv", test_args):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             # Help should exit with code 0
@@ -160,4 +154,4 @@ class TestCLI:
 
 
 if __name__ == "__main__":
-    pytest.main([__file__]) 
+    pytest.main([__file__])
