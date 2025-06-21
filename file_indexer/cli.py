@@ -111,6 +111,21 @@ def main() -> None:
         "--find-duplicates", action="store_true", help="Find duplicate files"
     )
     parser.add_argument("--stats", action="store_true", help="Show database statistics")
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Clean up database by removing records for deleted files"
+    )
+    parser.add_argument(
+        "--cleanup-empty-dirs",
+        action="store_true",
+        help="Clean up database by removing records for empty directories"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be cleaned up without actually making changes (use with --cleanup or --cleanup-empty-dirs)"
+    )
 
     args = parser.parse_args()
 
@@ -211,6 +226,34 @@ def main() -> None:
                 print(f"  Checksum reuses: {stats['checksum_reuses']:,}")
                 print(f"  Skipped checksums: {stats['skipped_checksums']:,}")
                 print(f"  Optimization: {stats['optimization_percentage']:.1f}%")
+                
+            # Cleanup stats if available
+            if stats.get("deleted_files", 0) > 0:
+                print(f"  Deleted files cleaned: {stats['deleted_files']:,}")
+        elif args.cleanup:
+            cleanup_result = indexer.cleanup_deleted_files(
+                batch_size=args.batch_size, dry_run=args.dry_run
+            )
+            print(f"\nCleanup Summary:")
+            print(f"  Files checked: {cleanup_result['total_checked']:,}")
+            print(f"  Deleted files found: {cleanup_result['deleted_files']:,}")
+            print(f"  Deleted directories: {cleanup_result['deleted_directories']:,}")
+            if cleanup_result['permission_errors'] > 0:
+                print(f"  Permission errors: {cleanup_result['permission_errors']:,}")
+            if cleanup_result['dry_run']:
+                print("  Note: This was a dry run - no changes were made")
+        elif args.cleanup_empty_dirs:
+            cleanup_result = indexer.cleanup_empty_directories(
+                batch_size=args.batch_size, dry_run=args.dry_run
+            )
+            print(f"\nEmpty Directory Cleanup Summary:")
+            print(f"  Directories checked: {cleanup_result['total_checked']:,}")
+            print(f"  Empty directories found: {cleanup_result['empty_directories']:,}")
+            print(f"  Files in empty directories: {cleanup_result['files_in_empty_dirs']:,}")
+            if cleanup_result['permission_errors'] > 0:
+                print(f"  Permission errors: {cleanup_result['permission_errors']:,}")
+            if cleanup_result['dry_run']:
+                print("  Note: This was a dry run - no changes were made")
         else:
             parser.print_help()
 

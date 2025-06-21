@@ -85,6 +85,7 @@ class FileIndexer:
         self.ignored_special_files = 0  # Device files, pipes, sockets, etc.
         self.skipped_checksums = 0  # Files that don't get checksums
         self.permission_errors = 0  # Files that couldn't be accessed due to permissions
+        self.deleted_files = 0  # Files removed from database during cleanup
 
     def _create_table(self) -> None:
         """Create the files table if it doesn't exist with nullable checksum."""
@@ -882,6 +883,7 @@ class FileIndexer:
         stats["ignored_special_files"] = self.ignored_special_files
         stats["skipped_checksums"] = self.skipped_checksums
         stats["permission_errors"] = self.permission_errors
+        stats["deleted_files"] = self.deleted_files
 
         total_operations = self.checksum_calculations + self.checksum_reuses
         if total_operations > 0:
@@ -902,6 +904,292 @@ class FileIndexer:
         self.ignored_special_files = 0
         self.skipped_checksums = 0
         self.permission_errors = 0
+        self.deleted_files = 0
+
+    def cleanup_deleted_files(self, batch_size: int = 1000, dry_run: bool = False) -> dict:
+        """
+        Check for deleted files and directories, and clean up the database.
+        
+        Args:
+            batch_size: Number of files to check in each batch
+            dry_run: If True, only report what would be deleted without actually deleting
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        print("Starting database cleanup for deleted files...")
+        if dry_run:
+            print("DRY RUN MODE: No files will be deleted from database")
+        
+        # Reset deleted files counter
+        self.deleted_files = 0
+        
+        # Get all files from database
+        print("Retrieving all files from database...")
+        all_files_query = """
+        SELECT path, filename, file_size, indexed_at
+        FROM files
+        ORDER BY path, filename
+        """
+        
+        all_files = self.conn.execute(all_files_query).fetchall()
+        total_db_files = len(all_files)
+        print(f"Found {total_db_files:,} files in database")
+        
+        if total_db_files == 0:
+            print("No files in database to check")
+            return {
+                "total_checked": 0,
+                "deleted_files": 0,
+                "deleted_directories": 0,
+                "permission_errors": 0,
+                "dry_run": dry_run
+            }
+        
+        # Track statistics
+        deleted_files = []
+        deleted_directories = set()
+        permission_errors = 0
+        checked_files = 0
+        
+        # Process files in batches
+        for i in range(0, len(all_files), batch_size):
+            batch = all_files[i:i + batch_size]
+            batch_deleted = []
+            
+            for path, filename, file_size, indexed_at in batch:
+                checked_files += 1
+                full_path = Path(path) / filename
+                
+                try:
+                    # Check if file exists
+                    if not full_path.exists():
+                        deleted_files.append((path, filename))
+                        batch_deleted.append((path, filename))
+                        
+                        # Track directory for potential cleanup
+                        if not Path(path).exists():
+                            deleted_directories.add(path)
+                    
+                    # Progress reporting
+                    if checked_files % 5000 == 0:
+                        print(f"Checked {checked_files:,}/{total_db_files:,} files...")
+                        
+                except PermissionError:
+                    permission_errors += 1
+                    print(f"Permission denied checking: {full_path}")
+                except OSError as e:
+                    # Other filesystem errors - treat as missing file
+                    print(f"Error checking file {full_path}: {e}")
+                    deleted_files.append((path, filename))
+                    batch_deleted.append((path, filename))
+            
+            # Delete this batch from database if not dry run
+            if batch_deleted and not dry_run:
+                self._delete_files_from_database(batch_deleted)
+        
+        # Report results
+        print(f"\nCleanup scan completed:")
+        print(f"  Files checked: {checked_files:,}")
+        print(f"  Files found to be deleted: {len(deleted_files):,}")
+        print(f"  Directories no longer existing: {len(deleted_directories):,}")
+        
+        if permission_errors > 0:
+            print(f"  Permission errors: {permission_errors:,}")
+        
+        if deleted_files:
+            print(f"\nSample of deleted files:")
+            for path, filename in deleted_files[:10]:  # Show first 10
+                print(f"  {Path(path) / filename}")
+            if len(deleted_files) > 10:
+                print(f"  ... and {len(deleted_files) - 10:,} more")
+        
+        if deleted_directories:
+            print(f"\nDirectories no longer existing:")
+            for directory in sorted(deleted_directories):
+                print(f"  {directory}")
+        
+        # Update counter
+        self.deleted_files = len(deleted_files)
+        
+        if not dry_run and deleted_files:
+            print(f"\nDatabase cleanup completed: {len(deleted_files):,} records removed")
+        elif dry_run and deleted_files:
+            print(f"\nDRY RUN: Would remove {len(deleted_files):,} records from database")
+        else:
+            print("\nNo cleanup needed - all database files still exist")
+        
+        return {
+            "total_checked": checked_files,
+            "deleted_files": len(deleted_files),
+            "deleted_directories": len(deleted_directories),
+            "permission_errors": permission_errors,
+            "dry_run": dry_run
+        }
+    
+    def _delete_files_from_database(self, file_records: list[tuple[str, str]]) -> None:
+        """
+        Delete multiple file records from the database in bulk.
+        
+        Args:
+            file_records: List of (path, filename) tuples to delete
+        """
+        if not file_records:
+            return
+        
+        self.conn.execute("BEGIN TRANSACTION")
+        
+        try:
+            delete_sql = """
+            DELETE FROM files 
+            WHERE path = ? AND filename = ?
+            """
+            self.conn.executemany(delete_sql, file_records)
+            self.conn.execute("COMMIT")
+            
+        except Exception as e:
+            self.conn.execute("ROLLBACK")
+            print(f"Database deletion failed: {e}")
+            raise
+
+    def cleanup_empty_directories(self, batch_size: int = 1000, dry_run: bool = False) -> dict:
+        """
+        Find and optionally remove database records for directories that no longer contain any files.
+        
+        Args:
+            batch_size: Number of directories to check in each batch
+            dry_run: If True, only report what would be cleaned without actually cleaning
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        print("Checking for empty directories in database...")
+        if dry_run:
+            print("DRY RUN MODE: No records will be deleted")
+        
+        # Get all unique directories from database
+        directories_query = """
+        SELECT DISTINCT path, COUNT(*) as file_count
+        FROM files
+        GROUP BY path
+        ORDER BY path
+        """
+        
+        directories = self.conn.execute(directories_query).fetchall()
+        total_directories = len(directories)
+        print(f"Found {total_directories:,} directories in database")
+        
+        if total_directories == 0:
+            return {
+                "total_checked": 0,
+                "empty_directories": 0,
+                "files_in_empty_dirs": 0,
+                "permission_errors": 0,
+                "dry_run": dry_run
+            }
+        
+        empty_directories = []
+        permission_errors = 0
+        files_in_empty_dirs = 0
+        checked_directories = 0
+        
+        for directory_path, file_count in directories:
+            checked_directories += 1
+            
+            try:
+                path_obj = Path(directory_path)
+                
+                # Check if directory exists
+                if not path_obj.exists():
+                    empty_directories.append(directory_path)
+                    files_in_empty_dirs += file_count
+                    continue
+                
+                # Check if directory is actually empty
+                if path_obj.is_dir():
+                    try:
+                        # Check if directory has any files (not just what's in our database)
+                        has_files = any(path_obj.iterdir())
+                        if not has_files:
+                            empty_directories.append(directory_path)
+                            files_in_empty_dirs += file_count
+                    except PermissionError:
+                        permission_errors += 1
+                        print(f"Permission denied checking directory: {directory_path}")
+                
+                # Progress reporting
+                if checked_directories % 100 == 0:
+                    print(f"Checked {checked_directories:,}/{total_directories:,} directories...")
+                    
+            except PermissionError:
+                permission_errors += 1
+                print(f"Permission denied checking: {directory_path}")
+            except OSError as e:
+                print(f"Error checking directory {directory_path}: {e}")
+                empty_directories.append(directory_path)
+                files_in_empty_dirs += file_count
+        
+        # Remove records for empty directories if not dry run
+        if empty_directories and not dry_run:
+            self._delete_directories_from_database(empty_directories)
+        
+        # Report results
+        print(f"\nEmpty directory scan completed:")
+        print(f"  Directories checked: {checked_directories:,}")
+        print(f"  Empty directories found: {len(empty_directories):,}")
+        print(f"  Files in empty directories: {files_in_empty_dirs:,}")
+        
+        if permission_errors > 0:
+            print(f"  Permission errors: {permission_errors:,}")
+        
+        if empty_directories:
+            print(f"\nEmpty directories:")
+            for directory in empty_directories[:20]:  # Show first 20
+                print(f"  {directory}")
+            if len(empty_directories) > 20:
+                print(f"  ... and {len(empty_directories) - 20:,} more")
+        
+        if not dry_run and empty_directories:
+            print(f"\nCleaned up {files_in_empty_dirs:,} records from {len(empty_directories):,} empty directories")
+        elif dry_run and empty_directories:
+            print(f"\nDRY RUN: Would remove {files_in_empty_dirs:,} records from {len(empty_directories):,} empty directories")
+        else:
+            print("\nNo empty directories found")
+        
+        return {
+            "total_checked": checked_directories,
+            "empty_directories": len(empty_directories),
+            "files_in_empty_dirs": files_in_empty_dirs,
+            "permission_errors": permission_errors,
+            "dry_run": dry_run
+        }
+    
+    def _delete_directories_from_database(self, directories: list[str]) -> None:
+        """
+        Delete all file records for the specified directories from the database.
+        
+        Args:
+            directories: List of directory paths to delete records for
+        """
+        if not directories:
+            return
+        
+        self.conn.execute("BEGIN TRANSACTION")
+        
+        try:
+            # Use IN clause for efficient deletion
+            placeholders = ",".join(["?"] * len(directories))
+            delete_sql = f"""
+            DELETE FROM files 
+            WHERE path IN ({placeholders})
+            """
+            self.conn.execute(delete_sql, directories)
+            self.conn.execute("COMMIT")
+            
+        except Exception as e:
+            self.conn.execute("ROLLBACK")
+            print(f"Database directory deletion failed: {e}")
+            raise
 
     def close(self) -> None:
         """Close the database connection."""

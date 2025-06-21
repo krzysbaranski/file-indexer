@@ -1023,33 +1023,219 @@ class TestFileIndexer:
         assert checksums == {}
 
     def test_stats_with_all_counters(self):
-        """Test that all counters are included in stats."""
-        # Do some operations to populate counters
-        self.indexer.update_database(self.test_files_dir, recursive=False)
+        """Test that stats include all performance counters."""
+        # Reset and perform various operations to populate counters
+        self.indexer.reset_optimization_counters()
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        
+        # Trigger all types of counters by re-indexing
+        self.indexer.update_database(self.test_files_dir, recursive=True)
 
         stats = self.indexer.get_stats()
-
-        # Check that all expected keys are present
+        
+        # Verify all counter keys exist in stats
         expected_keys = [
-            "total_files",
-            "total_size",
-            "files_with_checksum",
-            "files_without_checksum",
-            "unique_checksums",
-            "duplicate_files",
-            "last_indexed",
-            "checksum_calculations",
-            "checksum_reuses",
-            "skipped_files",
-            "ignored_symlinks",
-            "ignored_special_files",
-            "skipped_checksums",
-            "permission_errors",
-            "optimization_percentage",
+            'total_files', 'total_size', 'files_with_checksum', 'files_without_checksum',
+            'unique_checksums', 'duplicate_files', 'last_indexed',
+            'checksum_calculations', 'checksum_reuses', 'skipped_files',
+            'ignored_symlinks', 'ignored_special_files', 'skipped_checksums',
+            'permission_errors', 'optimization_percentage', 'deleted_files'
         ]
-
+        
         for key in expected_keys:
-            assert key in stats, f"Missing key in stats: {key}"
+            assert key in stats, f"Expected key '{key}' not found in stats"
+            
+        # Verify stats values are reasonable
+        assert stats['optimization_percentage'] >= 0
+        assert stats['optimization_percentage'] <= 100
+
+    def test_cleanup_deleted_files_dry_run(self):
+        """Test cleanup deleted files functionality in dry run mode."""
+        # First, index some files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        initial_stats = self.indexer.get_stats()
+        assert initial_stats["total_files"] == 5
+        
+        # Delete a test file from filesystem
+        self.test_file1.unlink()
+        
+        # Run cleanup in dry run mode
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=True)
+        
+        # Verify dry run results
+        assert cleanup_result['dry_run'] is True
+        assert cleanup_result['total_checked'] == 5
+        assert cleanup_result['deleted_files'] > 0  # Should find the deleted file
+        assert cleanup_result['permission_errors'] == 0
+        
+        # Database should be unchanged after dry run
+        after_dry_run_stats = self.indexer.get_stats()
+        assert after_dry_run_stats["total_files"] == initial_stats["total_files"]
+
+    def test_cleanup_deleted_files_actual(self):
+        """Test actual cleanup of deleted files."""
+        # First, index some files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        initial_stats = self.indexer.get_stats()
+        assert initial_stats["total_files"] == 5
+        
+        # Delete two test files from filesystem
+        self.test_file1.unlink()
+        self.test_file2.unlink()
+        
+        # Run actual cleanup
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # Verify cleanup results
+        assert cleanup_result['dry_run'] is False
+        assert cleanup_result['total_checked'] == 5
+        assert cleanup_result['deleted_files'] == 2
+        assert cleanup_result['permission_errors'] == 0
+        
+        # Database should be updated
+        after_cleanup_stats = self.indexer.get_stats()
+        assert after_cleanup_stats["total_files"] == 3  # 5 - 2 deleted = 3
+        
+        # Verify the deleted files are no longer in database
+        remaining_files = self.indexer.search_files()
+        remaining_filenames = [f['filename'] for f in remaining_files]
+        assert 'test1.txt' not in remaining_filenames
+        assert 'test2.txt' not in remaining_filenames
+        assert 'duplicate.txt' in remaining_filenames  # Should still be there
+        
+        # Verify deleted files counter is updated
+        assert self.indexer.deleted_files == 2
+
+    def test_cleanup_empty_directories(self):
+        """Test cleanup of empty directories."""
+        # First, index some files including subdirectory
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        initial_stats = self.indexer.get_stats()
+        assert initial_stats["total_files"] == 5
+        
+        # Remove all files from subdirectory and the directory itself
+        self.test_file4.unlink()  # Remove file from subdirectory
+        self.subdir.rmdir()  # Remove the now-empty subdirectory
+        
+        # Run empty directory cleanup (dry run first)
+        cleanup_result = self.indexer.cleanup_empty_directories(dry_run=True)
+        
+        # Should find the empty directory
+        assert cleanup_result['dry_run'] is True
+        assert cleanup_result['empty_directories'] >= 1
+        assert cleanup_result['files_in_empty_dirs'] >= 1
+        
+        # Database should be unchanged after dry run
+        after_dry_run_stats = self.indexer.get_stats()
+        assert after_dry_run_stats["total_files"] == initial_stats["total_files"]
+        
+        # Now run actual cleanup
+        cleanup_result = self.indexer.cleanup_empty_directories(dry_run=False)
+        
+        # Verify cleanup worked
+        assert cleanup_result['dry_run'] is False
+        assert cleanup_result['empty_directories'] >= 1
+        assert cleanup_result['files_in_empty_dirs'] >= 1
+        
+        # Database should be updated
+        after_cleanup_stats = self.indexer.get_stats()
+        assert after_cleanup_stats["total_files"] < initial_stats["total_files"]
+
+    def test_cleanup_nonexistent_files(self):
+        """Test cleanup when all files still exist (no cleanup needed)."""
+        # Index files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        
+        # Run cleanup without deleting any files
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # Should find no deleted files
+        assert cleanup_result['total_checked'] == 5
+        assert cleanup_result['deleted_files'] == 0
+        assert cleanup_result['deleted_directories'] == 0
+        
+        # Database should be unchanged
+        stats = self.indexer.get_stats()
+        assert stats["total_files"] == 5
+
+    def test_cleanup_entire_directory_deleted(self):
+        """Test cleanup when entire directory is deleted."""
+        # Index files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        initial_stats = self.indexer.get_stats()
+        assert initial_stats["total_files"] == 5
+        
+        # Remove entire test directory
+        import shutil
+        shutil.rmtree(self.test_files_dir)
+        
+        # Run cleanup
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # All files should be marked as deleted
+        assert cleanup_result['total_checked'] == 5
+        assert cleanup_result['deleted_files'] == 5
+        assert cleanup_result['deleted_directories'] >= 1  # At least the main directory
+        
+        # Database should be empty
+        after_cleanup_stats = self.indexer.get_stats()
+        assert after_cleanup_stats["total_files"] == 0
+
+    def test_cleanup_with_empty_database(self):
+        """Test cleanup when database is empty."""
+        # Don't index anything, database should be empty
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # Should handle empty database gracefully
+        assert cleanup_result['total_checked'] == 0
+        assert cleanup_result['deleted_files'] == 0
+        assert cleanup_result['deleted_directories'] == 0
+        assert cleanup_result['permission_errors'] == 0
+
+    def test_cleanup_batch_processing(self):
+        """Test cleanup with different batch sizes."""
+        # Index files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        
+        # Delete some files
+        self.test_file1.unlink()
+        self.test_file2.unlink()
+        
+        # Run cleanup with small batch size
+        cleanup_result = self.indexer.cleanup_deleted_files(batch_size=2, dry_run=False)
+        
+        # Should still work correctly
+        assert cleanup_result['deleted_files'] == 2
+        
+        # Database should be updated
+        stats = self.indexer.get_stats()
+        assert stats["total_files"] == 3
+
+    def test_cleanup_preserves_existing_files(self):
+        """Test that cleanup preserves files that still exist."""
+        # Index files
+        self.indexer.update_database(self.test_files_dir, recursive=True)
+        
+        # Delete only one file
+        self.test_file1.unlink()
+        
+        # Run cleanup
+        cleanup_result = self.indexer.cleanup_deleted_files(dry_run=False)
+        
+        # Only one file should be deleted from database
+        assert cleanup_result['deleted_files'] == 1
+        
+        # Other files should still be in database
+        remaining_files = self.indexer.search_files()
+        assert len(remaining_files) == 4
+        
+        # Verify specific files are preserved
+        remaining_filenames = [f['filename'] for f in remaining_files]
+        assert 'test2.txt' in remaining_filenames
+        assert 'duplicate.txt' in remaining_filenames
+        assert 'test3.txt' in remaining_filenames
+        assert 'empty.txt' in remaining_filenames
+        assert 'test1.txt' not in remaining_filenames
 
 
 if __name__ == "__main__":
