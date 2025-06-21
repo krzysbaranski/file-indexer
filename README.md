@@ -218,6 +218,24 @@ indexer.close()
 - **Database Indexes**: The system creates indexes on frequently queried columns for better performance.
 - **Memory Usage**: Files are read in 8KB chunks to minimize memory usage for large files.
 
+## Limitations
+
+### File Deletion Detection
+
+**Important**: The file indexer does **not** automatically detect or handle file deletions from the filesystem. If files are deleted from the directory after being indexed in the database, they will remain in the database as stale entries.
+
+**Recommended Solution**: If you suspect that files have been deleted since the last database update, it is recommended to recreate the database from scratch rather than trying to manually sync deletions:
+
+```bash
+# Remove the existing database file
+rm file_index.db
+
+# Re-index the directory to create a fresh database
+file-indexer --scan /path/to/directory
+```
+
+This limitation exists because detecting deletions would require scanning both the filesystem and the database on every update, which would significantly impact performance for large file sets.
+
 ## File Handling
 
 - **Permissions**: Files that can't be read due to permissions are skipped with a warning.
