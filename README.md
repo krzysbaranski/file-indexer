@@ -2,6 +2,8 @@
 
 A high-performance file indexing tool using DuckDB with parallel processing and intelligent checksum optimization.
 
+[![codecov](https://codecov.io/gh/krzysbaranski/file-indexer/branch/main/graph/badge.svg)](https://codecov.io/gh/krzysbaranski/file-indexer)
+
 ## Features
 
 - **Fast file indexing** with parallel processing
