@@ -42,7 +42,7 @@ def main():
         # Example 2: Two-phase indexing (recommended for large datasets)
         print("\n=== Example 2: Two-Phase Indexing ===")
         indexer2 = FileIndexer("two_phase_index.db")
-        
+
         # This is much faster as it's the complete process
         indexer2.two_phase_indexing("/path/to/directory", recursive=True)
         indexer2.close()
@@ -50,15 +50,15 @@ def main():
         # Example 3: Manual two-phase process (for separate CLI processes)
         print("\n=== Example 3: Manual Two-Phase Process ===")
         indexer3 = FileIndexer("manual_index.db")
-        
+
         # Phase 1: Fast indexing without checksums
         print("Phase 1: Indexing files without checksums...")
         indexer3.index_files_without_checksums("/path/to/directory", recursive=True)
-        
+
         # Phase 2: Calculate checksums only for potential duplicates
         print("Phase 2: Calculating checksums for files with duplicate sizes...")
         indexer3.calculate_checksums_for_duplicates()
-        
+
         indexer3.close()
 
         # Example 4: Search operations

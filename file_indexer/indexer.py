@@ -153,6 +153,10 @@ class FileIndexer:
         Returns:
             True if checksum should be calculated, False otherwise
         """
+        # Special case: negative max_checksum_size means skip all checksums
+        if self.max_checksum_size < 0:
+            return False
+
         if self.skip_empty_files and file_size == 0:
             return False
 
@@ -820,22 +824,17 @@ class FileIndexer:
             batch_size: Number of files to process in each batch
         """
         print(f"Phase 1: Indexing files without checksums from: {directory_path}")
-        
+
         # Temporarily disable checksum calculation for all files
         original_max_checksum_size = self.max_checksum_size
-        original_skip_empty_files = self.skip_empty_files
-        
-        # Set to values that will make _should_calculate_checksum return False for all files
         self.max_checksum_size = -1  # Negative value means skip all checksums
-        self.skip_empty_files = True  # Also skip empty files
-        
+
         try:
             self.update_database(directory_path, recursive, batch_size)
         finally:
-            # Restore original settings
+            # Restore original setting
             self.max_checksum_size = original_max_checksum_size
-            self.skip_empty_files = original_skip_empty_files
-            
+
         print("Phase 1 completed: All files indexed without checksums")
 
     def calculate_checksums_for_duplicates(self, batch_size: int = 500) -> None:
@@ -847,7 +846,7 @@ class FileIndexer:
             batch_size: Number of files to process checksums for in each batch
         """
         print("Phase 2: Finding files with duplicate sizes...")
-        
+
         # Find all file sizes that have multiple files
         duplicate_sizes_query = """
         SELECT file_size, COUNT(*) as file_count
@@ -857,24 +856,24 @@ class FileIndexer:
         HAVING COUNT(*) > 1 
         ORDER BY file_size
         """
-        
+
         duplicate_sizes = self.conn.execute(duplicate_sizes_query).fetchall()
-        
+
         if not duplicate_sizes:
             print("No files with duplicate sizes found. No checksums needed.")
             return
-            
+
         total_duplicate_files = sum(count for _, count in duplicate_sizes)
         print(f"Found {len(duplicate_sizes)} different file sizes with duplicates")
         print(f"Total files that need checksum calculation: {total_duplicate_files}")
-        
+
         # Process files by size groups
         total_processed = 0
         total_updated = 0
-        
+
         for file_size, file_count in duplicate_sizes:
             print(f"Processing {file_count} files of size {file_size:,} bytes...")
-            
+
             # Get all files with this size that don't have checksums
             files_query = """
             SELECT path, filename 
@@ -882,45 +881,53 @@ class FileIndexer:
             WHERE file_size = ? AND checksum IS NULL
             ORDER BY path, filename
             """
-            
+
             files_with_size = self.conn.execute(files_query, [file_size]).fetchall()
-            file_paths = [os.path.join(path, filename) for path, filename in files_with_size]
-            
+            file_paths = [
+                os.path.join(path, filename) for path, filename in files_with_size
+            ]
+
             # Process in batches
             for i in range(0, len(file_paths), batch_size):
-                batch_paths = file_paths[i:i + batch_size]
+                batch_paths = file_paths[i : i + batch_size]
                 updated_count = self._calculate_checksums_for_files(batch_paths)
                 total_updated += updated_count
                 total_processed += len(batch_paths)
-                
-                print(f"  Processed {min(i + batch_size, len(file_paths))}/{len(file_paths)} files for this size")
-        
-        print(f"Phase 2 completed: Processed {total_processed} files, updated {total_updated} with checksums")
-        
+
+                print(
+                    f"  Processed {min(i + batch_size, len(file_paths))}/{len(file_paths)} files for this size"
+                )
+
+        print(
+            f"Phase 2 completed: Processed {total_processed} files, updated {total_updated} with checksums"
+        )
+
         # Show final statistics
         stats = self.get_stats()
-        print(f"Final stats: {stats['files_with_checksum']} files with checksums, "
-              f"{stats['files_without_checksum']} without checksums")
+        print(
+            f"Final stats: {stats['files_with_checksum']} files with checksums, "
+            f"{stats['files_without_checksum']} without checksums"
+        )
 
     def _calculate_checksums_for_files(self, file_paths: list[str]) -> int:
         """
         Calculate checksums for a specific list of files and update the database.
-        
+
         Args:
             file_paths: List of file paths to calculate checksums for
-            
+
         Returns:
             Number of files successfully updated with checksums
         """
         if not file_paths:
             return 0
-            
+
         # Calculate checksums in parallel
         checksums = self._calculate_checksums_parallel(file_paths)
-        
+
         if not checksums:
             return 0
-            
+
         # Prepare database updates
         update_data = []
         for file_path in file_paths:
@@ -929,16 +936,16 @@ class FileIndexer:
                 directory = str(path_obj.parent)
                 filename = path_obj.name
                 checksum = checksums[file_path]
-                
+
                 # Update record with checksum (keep existing modification_datetime and file_size)
                 update_data.append((checksum, directory, filename))
-        
+
         if not update_data:
             return 0
-            
+
         # Perform bulk database update
         self.conn.execute("BEGIN TRANSACTION")
-        
+
         try:
             update_sql = """
             UPDATE files 
@@ -947,9 +954,9 @@ class FileIndexer:
             """
             self.conn.executemany(update_sql, update_data)
             self.conn.execute("COMMIT")
-            
+
             return len(update_data)
-            
+
         except Exception as e:
             self.conn.execute("ROLLBACK")
             print(f"Database update failed: {e}")
@@ -962,7 +969,7 @@ class FileIndexer:
         Perform complete two-phase indexing:
         Phase 1: Index all files without checksums (fast)
         Phase 2: Calculate checksums only for files with duplicate sizes (targeted)
-        
+
         Args:
             directory_path: Path to directory to scan
             recursive: Whether to scan subdirectories recursively
@@ -970,21 +977,23 @@ class FileIndexer:
         """
         print("Starting two-phase indexing process...")
         print("=" * 50)
-        
+
         # Reset counters
         self.reset_optimization_counters()
-        
+
         # Phase 1: Index without checksums
         self.index_files_without_checksums(directory_path, recursive, batch_size)
-        
+
         print("\n" + "=" * 50)
-        
+
         # Phase 2: Calculate checksums for potential duplicates
-        self.calculate_checksums_for_duplicates(batch_size // 2)  # Smaller batch for checksum calculation
-        
+        self.calculate_checksums_for_duplicates(
+            batch_size // 2
+        )  # Smaller batch for checksum calculation
+
         print("\n" + "=" * 50)
         print("Two-phase indexing completed!")
-        
+
         # Show final performance statistics
         stats = self.get_stats()
         print(f"\nFinal Statistics:")
@@ -993,10 +1002,12 @@ class FileIndexer:
         print(f"  Files without checksums: {stats['files_without_checksum']:,}")
         print(f"  Potential duplicates found: {stats['duplicate_files']:,}")
         print(f"  Total size: {stats['total_size']:,} bytes")
-        
-        if stats['checksum_calculations'] > 0:
+
+        if stats["checksum_calculations"] > 0:
             print(f"  Checksum calculations: {stats['checksum_calculations']:,}")
-            print(f"  Optimization: {stats['optimization_percentage']:.1f}% checksums avoided")
+            print(
+                f"  Optimization: {stats['optimization_percentage']:.1f}% checksums avoided"
+            )
 
     # Compatibility methods to maintain the same interface
     def _get_file_info(

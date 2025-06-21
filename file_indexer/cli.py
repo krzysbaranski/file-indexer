@@ -148,7 +148,9 @@ def main() -> None:
             )
         elif args.index_no_checksum:
             indexer.index_files_without_checksums(
-                args.index_no_checksum, not args.no_recursive, batch_size=args.batch_size
+                args.index_no_checksum,
+                not args.no_recursive,
+                batch_size=args.batch_size,
             )
         elif args.calculate_duplicates:
             indexer.calculate_checksums_for_duplicates(batch_size=args.batch_size // 2)
