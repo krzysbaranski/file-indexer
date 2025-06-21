@@ -2,9 +2,9 @@
 Tests for the FileIndexer class.
 """
 
-import os
 import tempfile
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
@@ -18,8 +18,8 @@ class TestFileIndexer:
         """Set up test fixtures before each test method."""
         # Create a temporary directory for test database
         self.temp_dir = tempfile.mkdtemp()
-        self.db_path = os.path.join(self.temp_dir, "test.db")
-        self.indexer = FileIndexer(self.db_path)
+        self.db_path = Path(self.temp_dir) / "test.db"
+        self.indexer = FileIndexer(str(self.db_path))
 
         # Create a temporary directory with test files
         self.test_files_dir = tempfile.mkdtemp()
@@ -37,27 +37,20 @@ class TestFileIndexer:
     def create_test_files(self):
         """Create test files for testing."""
         # Create some test files with different content
-        self.test_file1 = os.path.join(self.test_files_dir, "test1.txt")
-        self.test_file2 = os.path.join(self.test_files_dir, "test2.txt")
-        self.test_file3 = os.path.join(self.test_files_dir, "duplicate.txt")
+        self.test_file1 = Path(self.test_files_dir) / "test1.txt"
+        self.test_file2 = Path(self.test_files_dir) / "test2.txt"
+        self.test_file3 = Path(self.test_files_dir) / "duplicate.txt"
 
         # Create a subdirectory
-        self.subdir = os.path.join(self.test_files_dir, "subdir")
-        os.makedirs(self.subdir)
-        self.test_file4 = os.path.join(self.subdir, "test3.txt")
+        self.subdir = Path(self.test_files_dir) / "subdir"
+        self.subdir.mkdir(parents=True)
+        self.test_file4 = self.subdir / "test3.txt"
 
         # Write content to files
-        with open(self.test_file1, "w") as f:
-            f.write("Hello World")
-
-        with open(self.test_file2, "w") as f:
-            f.write("Different content")
-
-        with open(self.test_file3, "w") as f:
-            f.write("Hello World")  # Duplicate content
-
-        with open(self.test_file4, "w") as f:
-            f.write("Subdirectory file")
+        self.test_file1.write_text("Hello World")
+        self.test_file2.write_text("Different content")
+        self.test_file3.write_text("Hello World")  # Duplicate content
+        self.test_file4.write_text("Subdirectory file")
 
     def test_initial_stats(self):
         """Test that initial database stats are empty."""
@@ -76,7 +69,7 @@ class TestFileIndexer:
         assert len(files) == 4
 
         # Check that all expected files are found
-        file_names = [os.path.basename(f) for f in files]
+        file_names = [Path(f).name for f in files]
         assert "test1.txt" in file_names
         assert "test2.txt" in file_names
         assert "duplicate.txt" in file_names
@@ -90,7 +83,7 @@ class TestFileIndexer:
         assert len(files) == 3
 
         # Check that subdirectory file is not included
-        file_names = [os.path.basename(f) for f in files]
+        file_names = [Path(f).name for f in files]
         assert "test1.txt" in file_names
         assert "test2.txt" in file_names
         assert "duplicate.txt" in file_names
@@ -206,8 +199,7 @@ class TestFileIndexer:
         initial_stats = self.indexer.get_stats()
 
         # Modify a file
-        with open(self.test_file1, "w") as f:
-            f.write("Modified content")
+        self.test_file1.write_text("Modified content")
 
         # Update database again
         self.indexer.update_database(self.test_files_dir, recursive=False)
@@ -221,23 +213,25 @@ class TestFileIndexer:
         """Test that checksum calculation is optimized for unchanged files."""
         # Reset counters
         self.indexer.reset_optimization_counters()
-        
+
         # Index the files initially
         self.indexer.update_database(self.test_files_dir, recursive=False)
         initial_calculations = self.indexer.checksum_calculations
         initial_reuses = self.indexer.checksum_reuses
-        
+
         # All files should have required checksum calculations on first run
         assert initial_calculations == 3  # 3 files in root directory
         assert initial_reuses == 0
-        
+
         # Update database again without modifying files
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Should have reused existing checksums for unmodified files
-        assert self.indexer.checksum_calculations == initial_calculations  # No additional calculations
+        assert (
+            self.indexer.checksum_calculations == initial_calculations
+        )  # No additional calculations
         assert self.indexer.checksum_reuses == 3  # All 3 files reused checksums
-        
+
         # Check optimization statistics
         stats = self.indexer.get_stats()
         assert stats["checksum_calculations"] == 3
@@ -249,35 +243,36 @@ class TestFileIndexer:
         # Reset counters and index initially
         self.indexer.reset_optimization_counters()
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Modify one file
-        with open(self.test_file1, "w") as f:
-            f.write("Modified content")
-        
+        self.test_file1.write_text("Modified content")
+
         # Reset counters to track only the second update
         self.indexer.reset_optimization_counters()
-        
+
         # Update database again
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Should have calculated checksum for 1 modified file and reused 2 others
         assert self.indexer.checksum_calculations == 1
         assert self.indexer.checksum_reuses == 2
-        
+
         stats = self.indexer.get_stats()
-        assert stats["optimization_percentage"] == round((2/3) * 100, 2)  # 2 reused out of 3 total
+        assert stats["optimization_percentage"] == round(
+            (2 / 3) * 100, 2
+        )  # 2 reused out of 3 total
 
     def test_reset_optimization_counters(self):
         """Test resetting optimization counters."""
         # Do some operations
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Verify counters have values
         assert self.indexer.checksum_calculations > 0
-        
+
         # Reset counters
         self.indexer.reset_optimization_counters()
-        
+
         # Verify counters are reset
         assert self.indexer.checksum_calculations == 0
         assert self.indexer.checksum_reuses == 0
@@ -286,25 +281,25 @@ class TestFileIndexer:
         """Test that skipped files are properly tracked and exposed in stats."""
         # Reset counters
         self.indexer.reset_optimization_counters()
-        
+
         # Index files initially
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Verify no files were skipped on first run
         stats = self.indexer.get_stats()
         assert stats["skipped_files"] == 0
-        
+
         # Reset counters to track only the second update
         self.indexer.reset_optimization_counters()
-        
+
         # Update database again without modifying files
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Verify skipped files are tracked in stats
         stats = self.indexer.get_stats()
         assert stats["skipped_files"] == 3  # All 3 files should be skipped
         assert "skipped_files" in stats  # Ensure key exists in stats dictionary
-        
+
         # Verify reset works for skipped files too
         self.indexer.reset_optimization_counters()
         stats = self.indexer.get_stats()
@@ -312,51 +307,49 @@ class TestFileIndexer:
 
     def test_ignore_symbolic_links(self):
         """Test that symbolic links are ignored during scanning and indexing."""
-        import os
-        
         # Create a test file and a symbolic link to it
-        test_file = os.path.join(self.test_files_dir, "real_file.txt")
-        symlink_file = os.path.join(self.test_files_dir, "symlink_file.txt")
-        
-        with open(test_file, "w") as f:
-            f.write("Real file content")
-        
+        test_file = Path(self.test_files_dir) / "real_file.txt"
+        symlink_file = Path(self.test_files_dir) / "symlink_file.txt"
+
+        test_file.write_text("Real file content")
+
         # Create symbolic link (skip test if symlinks not supported on platform)
         try:
-            os.symlink(test_file, symlink_file)
+            symlink_file.symlink_to(test_file)
         except (OSError, NotImplementedError):
             # Symlinks not supported on this platform, skip test
             import pytest
+
             pytest.skip("Symbolic links not supported on this platform")
-        
+
         # Reset counters
         self.indexer.reset_optimization_counters()
-        
+
         # Scan directory - should find real file but ignore symlink
         files = self.indexer.scan_directory(self.test_files_dir, recursive=False)
-        
+
         # Should find the original 3 test files + 1 new real file = 4 total
         # But should NOT include the symlink
         assert len(files) == 4
-        assert test_file in files
-        assert symlink_file not in files
-        
+        assert str(test_file) in files
+        assert str(symlink_file) not in files
+
         # Check that symlink was tracked as ignored
         assert self.indexer.ignored_symlinks == 1
-        
+
         # Index the directory
         self.indexer.update_database(self.test_files_dir, recursive=False)
-        
+
         # Check stats include ignored symlinks
         stats = self.indexer.get_stats()
         assert stats["ignored_symlinks"] == 1
         assert "ignored_symlinks" in stats  # Ensure key exists
-        
+
         # Database should only contain 4 files (not the symlink)
         assert stats["total_files"] == 4
-        
+
         # Clean up the symlink
-        os.unlink(symlink_file)
+        symlink_file.unlink()
 
 
 if __name__ == "__main__":

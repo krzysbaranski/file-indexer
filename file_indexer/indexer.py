@@ -101,8 +101,14 @@ class FileIndexer:
                 # If modification time hasn't changed, reuse existing checksum
                 if modification_datetime == existing_mod_time:
                     self.checksum_reuses += 1
-                    return (directory, filename, existing_checksum, modification_datetime, file_size)
-            
+                    return (
+                        directory,
+                        filename,
+                        existing_checksum,
+                        modification_datetime,
+                        file_size,
+                    )
+
             # File is new or modified, calculate checksum
             checksum = self._calculate_checksum(file_path)
             if not checksum:  # Skip files we couldn't read
@@ -198,15 +204,16 @@ class FileIndexer:
 
                 # Get file info (only calculates checksum if needed)
                 file_info = self._get_file_info(
-                    file_path, 
-                    (existing[0], existing[1]) if existing else None
+                    file_path, (existing[0], existing[1]) if existing else None
                 )
-                
+
                 if not file_info:
                     errors += 1
                     continue
 
-                directory, filename, checksum, modification_datetime, file_size = file_info
+                directory, filename, checksum, modification_datetime, file_size = (
+                    file_info
+                )
 
                 if existing:
                     existing_checksum, existing_mod_time, existing_size = existing
@@ -242,7 +249,13 @@ class FileIndexer:
                         INSERT INTO files (path, filename, checksum, modification_datetime, file_size)
                         VALUES (?, ?, ?, ?, ?)
                     """,
-                        [directory, filename, checksum, modification_datetime, file_size],
+                        [
+                            directory,
+                            filename,
+                            checksum,
+                            modification_datetime,
+                            file_size,
+                        ],
                     )
                     added += 1
 
@@ -258,16 +271,18 @@ class FileIndexer:
         print(
             f"Completed! Processed: {processed}, Added: {added}, Updated: {updated}, Skipped: {self.skipped_files}, Errors: {errors}"
         )
-        
+
         # Show symlinks ignored
         if self.ignored_symlinks > 0:
             print(f"Ignored {self.ignored_symlinks} symbolic links")
-        
+
         # Show optimization benefits
         total_checksum_ops = self.checksum_calculations + self.checksum_reuses
         if total_checksum_ops > 0:
             optimization_pct = (self.checksum_reuses / total_checksum_ops) * 100
-            print(f"Performance: Calculated {self.checksum_calculations} checksums, reused {self.checksum_reuses} ({optimization_pct:.1f}% optimization)")
+            print(
+                f"Performance: Calculated {self.checksum_calculations} checksums, reused {self.checksum_reuses} ({optimization_pct:.1f}% optimization)"
+            )
         else:
             print("Performance: No checksum operations performed")
 
