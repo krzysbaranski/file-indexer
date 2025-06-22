@@ -10,6 +10,7 @@ import duckdb
 from .models import (
     DatabaseStats,
     DuplicateGroup,
+    DuplicatesRequest,
     ExtensionStats,
     FileRecord,
     SearchRequest,
@@ -136,25 +137,218 @@ class DatabaseService:
 
         return files, total_count
 
-    def find_duplicates(self, min_group_size: int = 2) -> list[DuplicateGroup]:
-        """Find duplicate files grouped by checksum.
+    def find_duplicates(
+        self,
+        min_group_size: int = 2,
+        min_file_size: int | None = None,
+        max_file_size: int | None = None,
+        filename_pattern: str | None = None,
+        path_pattern: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[DuplicateGroup], int]:
+        """Find duplicate files grouped by checksum with pagination and filtering.
 
         Args:
             min_group_size: Minimum number of files in a group to be considered duplicates
+            min_file_size: Minimum file size in bytes (optional)
+            max_file_size: Maximum file size in bytes (optional)
+            filename_pattern: Pattern to match filenames (optional). Finds duplicates of files matching this pattern.
+            path_pattern: Pattern to match file paths (optional). Finds duplicates of files matching this pattern.
+            limit: Maximum number of groups to return (optional)
+            offset: Number of groups to skip for pagination
 
         Returns:
-            List of duplicate groups
+            Tuple of (duplicate_groups, total_groups_count)
         """
         if not self.conn:
             raise RuntimeError("Database not connected")
 
-        query = """
+        # If filename or path patterns are provided, use the pattern-based approach
+        if filename_pattern or path_pattern:
+            return self._find_duplicates_by_pattern(
+                min_group_size,
+                min_file_size,
+                max_file_size,
+                filename_pattern,
+                path_pattern,
+                limit,
+                offset,
+            )
+
+        # Otherwise, use the original size-based filtering approach
+        return self._find_duplicates_by_size(
+            min_group_size, min_file_size, max_file_size, limit, offset
+        )
+
+    def _find_duplicates_by_pattern(
+        self,
+        min_group_size: int,
+        min_file_size: int | None,
+        max_file_size: int | None,
+        filename_pattern: str | None,
+        path_pattern: str | None,
+        limit: int | None,
+        offset: int,
+    ) -> tuple[list[DuplicateGroup], int]:
+        """Find duplicates by first filtering files by name/path patterns, then finding all duplicates of those files."""
+
+        # Step 1: Find files matching the filename/path patterns
+        pattern_conditions = []
+        pattern_params = []
+
+        if filename_pattern:
+            pattern_conditions.append("filename LIKE ?")
+            pattern_params.append(filename_pattern)
+
+        if path_pattern:
+            pattern_conditions.append("path LIKE ?")
+            pattern_params.append(path_pattern)
+
+        # Add size filters to the pattern matching
+        if min_file_size is not None:
+            pattern_conditions.append("file_size >= ?")
+            pattern_params.append(min_file_size)
+
+        if max_file_size is not None:
+            pattern_conditions.append("file_size <= ?")
+            pattern_params.append(max_file_size)
+
+        pattern_filter = (
+            " AND ".join(pattern_conditions) if pattern_conditions else "1=1"
+        )
+
+        # Step 2: Get checksums of files matching the pattern
+        checksums_query = f"""
+        SELECT DISTINCT checksum
+        FROM files
+        WHERE checksum IS NOT NULL
+        AND {pattern_filter}
+        """
+
+        checksum_results = self.conn.execute(checksums_query, pattern_params).fetchall()
+        target_checksums = [row[0] for row in checksum_results]
+
+        if not target_checksums:
+            return [], 0
+
+        # Step 3: Find ALL files with those checksums (across entire database)
+        checksum_placeholders = ",".join("?" * len(target_checksums))
+
+        # Count total groups
+        count_query = f"""
+        SELECT COUNT(DISTINCT checksum)
+        FROM files
+        WHERE checksum IN ({checksum_placeholders})
+        AND checksum IN (
+            SELECT checksum
+            FROM files
+            WHERE checksum IN ({checksum_placeholders})
+            GROUP BY checksum
+            HAVING COUNT(*) >= ?
+        )
+        """
+
+        total_groups = self.conn.execute(
+            count_query, target_checksums + target_checksums + [min_group_size]
+        ).fetchone()[0]
+
+        # Get paginated results
+        pagination_clause = ""
+        pagination_params = []
+        if limit is not None:
+            pagination_clause = "LIMIT ? OFFSET ?"
+            pagination_params = [limit, offset]
+
+        # Step 4: Get all duplicate groups with those checksums
+        query = f"""
+        WITH target_duplicate_checksums AS (
+            SELECT checksum, file_size, COUNT(*) as file_count
+            FROM files
+            WHERE checksum IN ({checksum_placeholders})
+            GROUP BY checksum, file_size
+            HAVING COUNT(*) >= ?
+            ORDER BY COUNT(*) DESC, file_size DESC
+            {pagination_clause}
+        )
+        SELECT
+            f.checksum,
+            f.file_size,
+            tdc.file_count,
+            f.path,
+            f.filename,
+            f.modification_datetime,
+            f.indexed_at
+        FROM files f
+        JOIN target_duplicate_checksums tdc ON f.checksum = tdc.checksum AND f.file_size = tdc.file_size
+        ORDER BY tdc.file_count DESC, f.checksum, f.path, f.filename
+        """
+
+        results = self.conn.execute(
+            query, target_checksums + [min_group_size] + pagination_params
+        ).fetchall()
+
+        return self._group_duplicate_results(results), total_groups
+
+    def _find_duplicates_by_size(
+        self,
+        min_group_size: int,
+        min_file_size: int | None,
+        max_file_size: int | None,
+        limit: int | None,
+        offset: int,
+    ) -> tuple[list[DuplicateGroup], int]:
+        """Find duplicates using the original size-based filtering approach."""
+
+        # Build conditions for file size filtering
+        size_conditions = []
+        size_params = []
+
+        if min_file_size is not None:
+            size_conditions.append("file_size >= ?")
+            size_params.append(min_file_size)
+
+        if max_file_size is not None:
+            size_conditions.append("file_size <= ?")
+            size_params.append(max_file_size)
+
+        size_filter = f"AND {' AND '.join(size_conditions)}" if size_conditions else ""
+
+        # First, get the total count of duplicate groups
+        count_query = f"""
+        SELECT COUNT(DISTINCT checksum)
+        FROM files
+        WHERE checksum IS NOT NULL
+        {size_filter}
+        AND checksum IN (
+            SELECT checksum
+            FROM files
+            WHERE checksum IS NOT NULL {size_filter}
+            GROUP BY checksum
+            HAVING COUNT(*) >= ?
+        )
+        """
+
+        total_groups = self.conn.execute(
+            count_query, size_params + [min_group_size]
+        ).fetchone()[0]
+
+        # Then get the duplicate groups with pagination
+        pagination_clause = ""
+        pagination_params = []
+        if limit is not None:
+            pagination_clause = "LIMIT ? OFFSET ?"
+            pagination_params = [limit, offset]
+
+        query = f"""
         WITH duplicate_checksums AS (
             SELECT checksum, file_size, COUNT(*) as file_count
             FROM files
-            WHERE checksum IS NOT NULL
+            WHERE checksum IS NOT NULL {size_filter}
             GROUP BY checksum, file_size
             HAVING COUNT(*) >= ?
+            ORDER BY COUNT(*) DESC, file_size DESC
+            {pagination_clause}
         )
         SELECT
             f.checksum,
@@ -169,16 +363,31 @@ class DatabaseService:
         ORDER BY dc.file_count DESC, f.checksum, f.path, f.filename
         """
 
-        results = self.conn.execute(query, [min_group_size]).fetchall()
+        results = self.conn.execute(
+            query, size_params + [min_group_size] + pagination_params
+        ).fetchall()
 
-        # Group results by checksum
+        return self._group_duplicate_results(results), total_groups
+
+    def _group_duplicate_results(self, results: list) -> list[DuplicateGroup]:
+        """Group database results into DuplicateGroup objects."""
         groups_dict: dict[str, DuplicateGroup] = {}
 
         for row in results:
             checksum = row[0]
+            file_size = row[1]
+            file_count = row[2]
+
             if checksum not in groups_dict:
+                wasted_space = file_size * (
+                    file_count - 1
+                )  # Total wasted space for this group
                 groups_dict[checksum] = DuplicateGroup(
-                    checksum=checksum, file_size=row[1], file_count=row[2], files=[]
+                    checksum=checksum,
+                    file_size=file_size,
+                    file_count=file_count,
+                    files=[],
+                    wasted_space=wasted_space,
                 )
 
             groups_dict[checksum].files.append(
@@ -187,12 +396,26 @@ class DatabaseService:
                     filename=row[4],
                     checksum=checksum,
                     modification_datetime=row[5],
-                    file_size=row[1],
+                    file_size=file_size,
                     indexed_at=row[6],
                 )
             )
 
         return list(groups_dict.values())
+
+    def find_duplicates_with_request(
+        self, request: DuplicatesRequest
+    ) -> tuple[list[DuplicateGroup], int]:
+        """Find duplicates using a DuplicatesRequest object."""
+        return self.find_duplicates(
+            min_group_size=request.min_group_size,
+            min_file_size=request.min_file_size,
+            max_file_size=request.max_file_size,
+            filename_pattern=request.filename_pattern,
+            path_pattern=request.path_pattern,
+            limit=request.limit,
+            offset=request.offset,
+        )
 
     def get_database_stats(self) -> DatabaseStats:
         """Get comprehensive database statistics."""
