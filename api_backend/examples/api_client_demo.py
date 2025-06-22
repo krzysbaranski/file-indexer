@@ -218,7 +218,7 @@ def main():
         if duplicates["duplicate_groups"]:
             print("Top 5 duplicate groups:")
             for i, group in enumerate(duplicates["duplicate_groups"]):
-                wasted_mb = group["wasted_space"] / (1024 * 1024)
+                group["wasted_space"] / (1024 * 1024)
                 print(
                     f"\n  Group {i + 1}: {group['file_count']} files, {format_file_size(group['file_size'])} each"
                 )

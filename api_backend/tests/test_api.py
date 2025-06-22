@@ -5,13 +5,13 @@ Basic API tests for the File Indexer API.
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import Mock, patch
 from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.testclient import TestClient
 
 from file_indexer_api.database import DatabaseService
 from file_indexer_api.models import DatabaseStats, FileRecord
@@ -39,7 +39,7 @@ def test_app():
     """Create a test FastAPI app without the problematic lifespan."""
 
     @asynccontextmanager
-    async def empty_lifespan(app: FastAPI) -> Any:
+    async def empty_lifespan(app: FastAPI) -> Any:  # noqa: ARG001
         # Empty lifespan for testing
         yield
 
