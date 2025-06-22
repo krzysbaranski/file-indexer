@@ -25,13 +25,17 @@ export const Duplicates: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [totalGroups, setTotalGroups] = useState(0);
+  const [totalWastedSpace, setTotalWastedSpace] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [minGroupSize, setMinGroupSize] = useState(2);
-  const [minFileSize, setMinFileSize] = useState(5 * 1024 * 1024); // Default 5MB
+  const [minFileSize, setMinFileSize] = useState<number | null>(null);
   const [maxFileSize, setMaxFileSize] = useState<number | null>(null);
-  const [fileTypeFilter, setFileTypeFilter] = useState('');
+  const [filenamePattern, setFilenamePattern] = useState('');
+  const [pathPattern, setPathPattern] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   
   // Pagination states
@@ -40,14 +44,28 @@ export const Duplicates: React.FC = () => {
 
   useEffect(() => {
     loadDuplicates();
-  }, [minGroupSize]);
+  }, [minGroupSize, minFileSize, maxFileSize, filenamePattern, pathPattern, currentPage, itemsPerPage]);
 
   const loadDuplicates = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await FileIndexerAPI.findDuplicates(minGroupSize);
+      
+      const params = {
+        min_group_size: minGroupSize,
+        min_file_size: minFileSize || undefined,
+        max_file_size: maxFileSize || undefined,
+        filename_pattern: filenamePattern || undefined,
+        path_pattern: pathPattern || undefined,
+        limit: itemsPerPage,
+        offset: (currentPage - 1) * itemsPerPage,
+      };
+      
+      const response = await FileIndexerAPI.findDuplicates(params);
       setDuplicates(response.duplicate_groups || []);
+      setTotalGroups(response.total_groups);
+      setTotalWastedSpace(response.total_wasted_space);
+      setHasMore(response.has_more);
     } catch (err) {
       setError('Failed to load duplicates');
       console.error('Error loading duplicates:', err);
@@ -56,43 +74,22 @@ export const Duplicates: React.FC = () => {
     }
   };
 
-  // Advanced filtering logic
+  // Client-side search filter for already loaded results
   const filteredDuplicates = useMemo(() => {
+    if (!searchTerm) return duplicates;
+    
+    const searchLower = searchTerm.toLowerCase();
     return duplicates.filter(group => {
-      // Size filter
-      const fileSize = group.files[0]?.file_size || 0;
-      if (fileSize < minFileSize) return false;
-      if (maxFileSize && fileSize > maxFileSize) return false;
-
-      // Search term filter
-      if (searchTerm) {
-        const searchLower = searchTerm.toLowerCase();
-        const hasMatch = group.files.some(file => 
-          file.filename.toLowerCase().includes(searchLower) ||
-          file.path.toLowerCase().includes(searchLower)
-        );
-        if (!hasMatch) return false;
-      }
-
-      // File type filter
-      if (fileTypeFilter) {
-        const hasTypeMatch = group.files.some(file => {
-          const extension = file.filename.split('.').pop()?.toLowerCase() || '';
-          return extension.includes(fileTypeFilter.toLowerCase());
-        });
-        if (!hasTypeMatch) return false;
-      }
-
-      return true;
+      return group.files.some(file => 
+        file.filename.toLowerCase().includes(searchLower) ||
+        file.path.toLowerCase().includes(searchLower)
+      );
     });
-  }, [duplicates, minFileSize, maxFileSize, searchTerm, fileTypeFilter]);
+  }, [duplicates, searchTerm]);
 
-  // Pagination logic
-  const totalPages = Math.ceil(filteredDuplicates.length / itemsPerPage);
-  const paginatedDuplicates = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    return filteredDuplicates.slice(startIndex, startIndex + itemsPerPage);
-  }, [filteredDuplicates, currentPage, itemsPerPage]);
+  // Pagination logic - server-side pagination
+  const totalPages = Math.ceil(totalGroups / itemsPerPage);
+  const paginatedDuplicates = filteredDuplicates;
 
   const toggleGroup = (checksum: string) => {
     const newExpanded = new Set(expandedGroups);
@@ -104,21 +101,15 @@ export const Duplicates: React.FC = () => {
     setExpandedGroups(newExpanded);
   };
 
-  const calculateWastedSpace = () => {
-    return filteredDuplicates.reduce((total, group) => {
-      const fileSize = group.files[0]?.file_size || 0;
-      return total + (fileSize * (group.files.length - 1));
-    }, 0);
-  };
-
   const totalDuplicateFiles = filteredDuplicates.reduce((sum, group) => sum + group.files.length, 0);
-  const wastedSpace = calculateWastedSpace();
+  const displayedWastedSpace = filteredDuplicates.reduce((total, group) => total + (group.wasted_space || 0), 0);
 
   const resetFilters = () => {
     setSearchTerm('');
-    setMinFileSize(5 * 1024 * 1024);
+    setMinFileSize(null);
     setMaxFileSize(null);
-    setFileTypeFilter('');
+    setFilenamePattern('');
+    setPathPattern('');
     setCurrentPage(1);
   };
 
@@ -193,7 +184,7 @@ export const Duplicates: React.FC = () => {
         <div className="card">
           <div className="card-content space-y-4">
             {/* Search and basic filters row */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Search Files</label>
                 <div className="relative">
@@ -212,13 +203,27 @@ export const Duplicates: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">File Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Filename Pattern</label>
                 <input
                   type="text"
-                  placeholder="jpg, pdf, mp4..."
-                  value={fileTypeFilter}
+                  placeholder="*.jpg, *.pdf, report*..."
+                  value={filenamePattern}
                   onChange={(e) => {
-                    setFileTypeFilter(e.target.value);
+                    setFilenamePattern(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="input text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Path Pattern</label>
+                <input
+                  type="text"
+                  placeholder="*/Downloads/*, */Pictures/*..."
+                  value={pathPattern}
+                  onChange={(e) => {
+                    setPathPattern(e.target.value);
                     setCurrentPage(1);
                   }}
                   className="input text-sm"
@@ -267,21 +272,29 @@ export const Duplicates: React.FC = () => {
                     type="number"
                     step="0.1"
                     min="0"
-                    value={formatSizeForInput(minFileSize)}
+                    placeholder="No limit"
+                    value={minFileSize ? formatSizeForInput(minFileSize) : ''}
                     onChange={(e) => {
-                      const size = parseSizeFromInput(e.target.value, minFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB');
-                      setMinFileSize(size);
+                      if (!e.target.value) {
+                        setMinFileSize(null);
+                      } else {
+                        const unit = minFileSize && minFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB';
+                        const size = parseSizeFromInput(e.target.value, unit);
+                        setMinFileSize(size);
+                      }
                       setCurrentPage(1);
                     }}
                     className="input text-sm w-24"
                   />
                   <select
-                    value={minFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB'}
+                    value={minFileSize && minFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB'}
                     onChange={(e) => {
-                      const currentValue = formatSizeForInput(minFileSize);
-                      const size = parseSizeFromInput(currentValue, e.target.value);
-                      setMinFileSize(size);
-                      setCurrentPage(1);
+                      if (minFileSize) {
+                        const currentValue = formatSizeForInput(minFileSize);
+                        const size = parseSizeFromInput(currentValue, e.target.value);
+                        setMinFileSize(size);
+                        setCurrentPage(1);
+                      }
                     }}
                     className="input w-16 text-sm"
                   >
@@ -351,7 +364,7 @@ export const Duplicates: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Duplicate Groups</p>
-              <p className="text-2xl font-bold text-gray-900">{filteredDuplicates.length.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-gray-900">{totalGroups.toLocaleString()}</p>
             </div>
           </div>
         </div>
@@ -375,7 +388,7 @@ export const Duplicates: React.FC = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Wasted Space</p>
-              <p className="text-2xl font-bold text-gray-900">{formatFileSize(wastedSpace)}</p>
+              <p className="text-2xl font-bold text-gray-900">{formatFileSize(totalWastedSpace)}</p>
             </div>
           </div>
         </div>
@@ -399,7 +412,7 @@ export const Duplicates: React.FC = () => {
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <div className="text-sm text-gray-600">
-            Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredDuplicates.length)} of {filteredDuplicates.length} results
+            Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, (currentPage - 1) * itemsPerPage + paginatedDuplicates.length)} of {totalGroups} groups
           </div>
           <div className="flex items-center space-x-2">
             <button
@@ -455,7 +468,7 @@ export const Duplicates: React.FC = () => {
           paginatedDuplicates.map((group) => {
             const isExpanded = expandedGroups.has(group.checksum);
             const sampleFile = group.files[0];
-            const wastedSpaceForGroup = sampleFile.file_size * (group.files.length - 1);
+            const wastedSpaceForGroup = group.wasted_space || (sampleFile.file_size * (group.files.length - 1));
 
             return (
               <div key={group.checksum} className="card border-l-4 border-l-gradient-to-b from-orange-500 to-red-500">

@@ -2,6 +2,7 @@ import axios from 'axios';
 import type {
   SearchRequest,
   SearchResponse,
+  DuplicatesRequest,
   DuplicatesResponse,
   DatabaseStats,
   VisualizationData,
@@ -31,10 +32,13 @@ export class FileIndexerAPI {
     return response.data;
   }
 
-  static async findDuplicates(minGroupSize: number = 2): Promise<DuplicatesResponse> {
-    const response = await api.get<DuplicatesResponse>('/duplicates/', {
-      params: { min_group_size: minGroupSize },
-    });
+  static async findDuplicates(params: DuplicatesRequest = {}): Promise<DuplicatesResponse> {
+    const response = await api.get<DuplicatesResponse>('/duplicates/', { params });
+    return response.data;
+  }
+
+  static async findDuplicatesAdvanced(request: DuplicatesRequest): Promise<DuplicatesResponse> {
+    const response = await api.post<DuplicatesResponse>('/duplicates/', request);
     return response.data;
   }
 

@@ -26,17 +26,30 @@ export interface SearchResponse {
   has_more: boolean;
 }
 
+export interface DuplicatesRequest {
+  min_group_size?: number;
+  min_file_size?: number;
+  max_file_size?: number;
+  filename_pattern?: string;
+  path_pattern?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface DuplicateGroup {
   checksum: string;
   file_size: number;
   file_count: number;
   files: FileRecord[];
+  wasted_space: number;
 }
 
 export interface DuplicatesResponse {
   duplicate_groups: DuplicateGroup[];
   total_groups: number;
   total_duplicate_files: number;
+  total_wasted_space: number;
+  has_more: boolean;
 }
 
 export interface DatabaseStats {
