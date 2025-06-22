@@ -121,8 +121,10 @@ async def find_duplicates_post(
 ):
     """Find duplicate files grouped by checksum with filtering and pagination."""
     try:
-        duplicate_groups, total_groups = db.find_duplicates_with_request(duplicates_request)
-        
+        duplicate_groups, total_groups = db.find_duplicates_with_request(
+            duplicates_request
+        )
+
         total_duplicate_files = sum(group.file_count for group in duplicate_groups)
         total_wasted_space = sum(group.wasted_space for group in duplicate_groups)
         has_more = (duplicates_request.offset + len(duplicate_groups)) < total_groups
@@ -152,17 +154,17 @@ async def find_duplicates_get(
         None, ge=0, description="Maximum file size in bytes"
     ),
     filename_pattern: str | None = Query(
-        None, description="Pattern to match filenames (supports SQL LIKE patterns). Find duplicates of files matching this pattern."
+        None,
+        description="Pattern to match filenames (supports SQL LIKE patterns). Find duplicates of files matching this pattern.",
     ),
     path_pattern: str | None = Query(
-        None, description="Pattern to match file paths (supports SQL LIKE patterns). Find duplicates of files matching this pattern."
+        None,
+        description="Pattern to match file paths (supports SQL LIKE patterns). Find duplicates of files matching this pattern.",
     ),
     limit: int = Query(
         100, ge=1, le=1000, description="Maximum number of duplicate groups to return"
     ),
-    offset: int = Query(
-        0, ge=0, description="Number of duplicate groups to skip"
-    ),
+    offset: int = Query(0, ge=0, description="Number of duplicate groups to skip"),
 ):
     """Find duplicate files using GET parameters."""
     duplicates_request = DuplicatesRequest(

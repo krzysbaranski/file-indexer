@@ -37,12 +37,12 @@ def mock_db_service():
 @pytest.fixture
 def test_app():
     """Create a test FastAPI app without the problematic lifespan."""
-    
+
     @asynccontextmanager
     async def empty_lifespan(app: FastAPI) -> Any:
         # Empty lifespan for testing
         yield
-    
+
     # Create test app
     app = FastAPI(
         title="File Indexer API - Test",
@@ -50,7 +50,7 @@ def test_app():
         version="0.1.0",
         lifespan=empty_lifespan,
     )
-    
+
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -59,13 +59,13 @@ def test_app():
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Include routers
     app.include_router(health_router)
     app.include_router(search_router)
     app.include_router(duplicates_router)
     app.include_router(stats_router)
-    
+
     # Root endpoint
     @app.get("/")
     async def root() -> dict[str, str]:
@@ -75,7 +75,7 @@ def test_app():
             "docs": "/docs",
             "redoc": "/redoc",
         }
-    
+
     return app
 
 
@@ -197,7 +197,7 @@ def test_find_duplicates_with_pagination(client, mock_db_service):
     """Test the duplicates endpoint with pagination parameters."""
     # Mock duplicates response with some data
     from file_indexer_api.models import DuplicateGroup
-    
+
     mock_file = FileRecord(
         path="/test",
         filename="test.txt",
@@ -206,17 +206,17 @@ def test_find_duplicates_with_pagination(client, mock_db_service):
         file_size=1024,
         indexed_at=datetime.now(),
     )
-    
+
     mock_group = DuplicateGroup(
         checksum="abc123",
         file_size=1024,
         file_count=2,
         files=[mock_file, mock_file],
-        wasted_space=1024
+        wasted_space=1024,
     )
-    
+
     mock_db_service.find_duplicates_with_request.return_value = ([mock_group], 5)
-    
+
     # Test GET with query parameters
     response = client.get("/duplicates/?limit=1&offset=2&min_file_size=500")
     assert response.status_code == 200
@@ -241,12 +241,12 @@ def test_search_files_pagination(client, mock_db_service):
         ),
         FileRecord(
             path="/test",
-            filename="file2.txt", 
+            filename="file2.txt",
             checksum="def456",
             modification_datetime=datetime.now(),
             file_size=2048,
             indexed_at=datetime.now(),
-        )
+        ),
     ]
     mock_db_service.search_files.return_value = (mock_files, 10)
 
@@ -288,27 +288,30 @@ def test_database_stats(client, mock_db_service):
 def test_duplicates_request_validation(client, mock_db_service):
     """Test validation of duplicates request parameters."""
     mock_db_service.find_duplicates_with_request.return_value = ([], 0)
-    
+
     # Test invalid min_group_size (too small)
     response = client.post("/duplicates/", json={"min_group_size": 1})
     assert response.status_code == 422
-    
-    # Test invalid limit (too large)  
+
+    # Test invalid limit (too large)
     response = client.post("/duplicates/", json={"limit": 2000})
     assert response.status_code == 422
-    
+
     # Test invalid offset (negative)
     response = client.post("/duplicates/", json={"offset": -1})
     assert response.status_code == 422
-    
+
     # Test valid request
-    response = client.post("/duplicates/", json={
-        "min_group_size": 2,
-        "min_file_size": 1024,
-        "max_file_size": 1048576,
-        "limit": 50,
-        "offset": 0
-    })
+    response = client.post(
+        "/duplicates/",
+        json={
+            "min_group_size": 2,
+            "min_file_size": 1024,
+            "max_file_size": 1048576,
+            "limit": 50,
+            "offset": 0,
+        },
+    )
     assert response.status_code == 200
 
 
@@ -328,31 +331,32 @@ def test_duplicates_with_pattern_filtering(client, mock_db_service):
     mock_db_service.find_duplicates_with_request.return_value = ([], 0)
 
     # Test filename pattern filtering
-    response = client.post("/duplicates/", json={
-        "filename_pattern": "%.jpg",
-        "min_group_size": 2,
-        "limit": 10
-    })
+    response = client.post(
+        "/duplicates/",
+        json={"filename_pattern": "%.jpg", "min_group_size": 2, "limit": 10},
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["duplicate_groups"] == []
     assert data["total_groups"] == 0
 
-    # Test path pattern filtering  
-    response = client.post("/duplicates/", json={
-        "path_pattern": "%Downloads%",
-        "min_group_size": 2,
-        "limit": 10
-    })
+    # Test path pattern filtering
+    response = client.post(
+        "/duplicates/",
+        json={"path_pattern": "%Downloads%", "min_group_size": 2, "limit": 10},
+    )
     assert response.status_code == 200
 
     # Test combined pattern and size filtering
-    response = client.post("/duplicates/", json={
-        "filename_pattern": "%.pdf",
-        "min_file_size": 100000,
-        "min_group_size": 2,
-        "limit": 5
-    })
+    response = client.post(
+        "/duplicates/",
+        json={
+            "filename_pattern": "%.pdf",
+            "min_file_size": 100000,
+            "min_group_size": 2,
+            "limit": 5,
+        },
+    )
     assert response.status_code == 200
 
     # Test GET endpoint with pattern

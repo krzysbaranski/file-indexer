@@ -138,14 +138,14 @@ class DatabaseService:
         return files, total_count
 
     def find_duplicates(
-        self, 
+        self,
         min_group_size: int = 2,
         min_file_size: int | None = None,
         max_file_size: int | None = None,
         filename_pattern: str | None = None,
         path_pattern: str | None = None,
         limit: int | None = None,
-        offset: int = 0
+        offset: int = 0,
     ) -> tuple[list[DuplicateGroup], int]:
         """Find duplicate files grouped by checksum with pagination and filtering.
 
@@ -167,10 +167,15 @@ class DatabaseService:
         # If filename or path patterns are provided, use the pattern-based approach
         if filename_pattern or path_pattern:
             return self._find_duplicates_by_pattern(
-                min_group_size, min_file_size, max_file_size,
-                filename_pattern, path_pattern, limit, offset
+                min_group_size,
+                min_file_size,
+                max_file_size,
+                filename_pattern,
+                path_pattern,
+                limit,
+                offset,
             )
-        
+
         # Otherwise, use the original size-based filtering approach
         return self._find_duplicates_by_size(
             min_group_size, min_file_size, max_file_size, limit, offset
@@ -187,30 +192,32 @@ class DatabaseService:
         offset: int,
     ) -> tuple[list[DuplicateGroup], int]:
         """Find duplicates by first filtering files by name/path patterns, then finding all duplicates of those files."""
-        
+
         # Step 1: Find files matching the filename/path patterns
         pattern_conditions = []
         pattern_params = []
-        
+
         if filename_pattern:
             pattern_conditions.append("filename LIKE ?")
             pattern_params.append(filename_pattern)
-            
+
         if path_pattern:
             pattern_conditions.append("path LIKE ?")
             pattern_params.append(path_pattern)
-        
+
         # Add size filters to the pattern matching
         if min_file_size is not None:
             pattern_conditions.append("file_size >= ?")
             pattern_params.append(min_file_size)
-            
+
         if max_file_size is not None:
             pattern_conditions.append("file_size <= ?")
             pattern_params.append(max_file_size)
-        
-        pattern_filter = " AND ".join(pattern_conditions) if pattern_conditions else "1=1"
-        
+
+        pattern_filter = (
+            " AND ".join(pattern_conditions) if pattern_conditions else "1=1"
+        )
+
         # Step 2: Get checksums of files matching the pattern
         checksums_query = f"""
         SELECT DISTINCT checksum
@@ -218,16 +225,16 @@ class DatabaseService:
         WHERE checksum IS NOT NULL
         AND {pattern_filter}
         """
-        
+
         checksum_results = self.conn.execute(checksums_query, pattern_params).fetchall()
         target_checksums = [row[0] for row in checksum_results]
-        
+
         if not target_checksums:
             return [], 0
-        
+
         # Step 3: Find ALL files with those checksums (across entire database)
         checksum_placeholders = ",".join("?" * len(target_checksums))
-        
+
         # Count total groups
         count_query = f"""
         SELECT COUNT(DISTINCT checksum)
@@ -241,18 +248,18 @@ class DatabaseService:
             HAVING COUNT(*) >= ?
         )
         """
-        
+
         total_groups = self.conn.execute(
             count_query, target_checksums + target_checksums + [min_group_size]
         ).fetchone()[0]
-        
+
         # Get paginated results
         pagination_clause = ""
         pagination_params = []
         if limit is not None:
             pagination_clause = "LIMIT ? OFFSET ?"
             pagination_params = [limit, offset]
-        
+
         # Step 4: Get all duplicate groups with those checksums
         query = f"""
         WITH target_duplicate_checksums AS (
@@ -276,11 +283,11 @@ class DatabaseService:
         JOIN target_duplicate_checksums tdc ON f.checksum = tdc.checksum AND f.file_size = tdc.file_size
         ORDER BY tdc.file_count DESC, f.checksum, f.path, f.filename
         """
-        
+
         results = self.conn.execute(
             query, target_checksums + [min_group_size] + pagination_params
         ).fetchall()
-        
+
         return self._group_duplicate_results(results), total_groups
 
     def _find_duplicates_by_size(
@@ -292,19 +299,19 @@ class DatabaseService:
         offset: int,
     ) -> tuple[list[DuplicateGroup], int]:
         """Find duplicates using the original size-based filtering approach."""
-        
+
         # Build conditions for file size filtering
         size_conditions = []
         size_params = []
-        
+
         if min_file_size is not None:
             size_conditions.append("file_size >= ?")
             size_params.append(min_file_size)
-            
+
         if max_file_size is not None:
             size_conditions.append("file_size <= ?")
             size_params.append(max_file_size)
-        
+
         size_filter = f"AND {' AND '.join(size_conditions)}" if size_conditions else ""
 
         # First, get the total count of duplicate groups
@@ -321,7 +328,7 @@ class DatabaseService:
             HAVING COUNT(*) >= ?
         )
         """
-        
+
         total_groups = self.conn.execute(
             count_query, size_params + [min_group_size]
         ).fetchone()[0]
@@ -359,7 +366,7 @@ class DatabaseService:
         results = self.conn.execute(
             query, size_params + [min_group_size] + pagination_params
         ).fetchall()
-        
+
         return self._group_duplicate_results(results), total_groups
 
     def _group_duplicate_results(self, results: list) -> list[DuplicateGroup]:
@@ -370,15 +377,17 @@ class DatabaseService:
             checksum = row[0]
             file_size = row[1]
             file_count = row[2]
-            
+
             if checksum not in groups_dict:
-                wasted_space = file_size * (file_count - 1)  # Total wasted space for this group
+                wasted_space = file_size * (
+                    file_count - 1
+                )  # Total wasted space for this group
                 groups_dict[checksum] = DuplicateGroup(
-                    checksum=checksum, 
-                    file_size=file_size, 
-                    file_count=file_count, 
+                    checksum=checksum,
+                    file_size=file_size,
+                    file_count=file_count,
                     files=[],
-                    wasted_space=wasted_space
+                    wasted_space=wasted_space,
                 )
 
             groups_dict[checksum].files.append(

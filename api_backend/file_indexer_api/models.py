@@ -62,7 +62,9 @@ class DuplicatesRequest(BaseModel):
     """Model for duplicates search requests."""
 
     min_group_size: int = Field(
-        2, ge=2, description="Minimum number of files in a group to be considered duplicates"
+        2,
+        ge=2,
+        description="Minimum number of files in a group to be considered duplicates",
     )
     min_file_size: int | None = Field(
         None, ge=0, description="Minimum file size in bytes"
@@ -71,10 +73,12 @@ class DuplicatesRequest(BaseModel):
         None, ge=0, description="Maximum file size in bytes"
     )
     filename_pattern: str | None = Field(
-        None, description="Pattern to match filenames (supports SQL LIKE patterns). Find duplicates of files matching this pattern."
+        None,
+        description="Pattern to match filenames (supports SQL LIKE patterns). Find duplicates of files matching this pattern.",
     )
     path_pattern: str | None = Field(
-        None, description="Pattern to match file paths (supports SQL LIKE patterns). Find duplicates of files matching this pattern."
+        None,
+        description="Pattern to match file paths (supports SQL LIKE patterns). Find duplicates of files matching this pattern.",
     )
     limit: int = Field(
         100, ge=1, le=1000, description="Maximum number of duplicate groups to return"
@@ -91,7 +95,9 @@ class DuplicateGroup(BaseModel):
     file_size: int
     file_count: int
     files: list[FileRecord]
-    wasted_space: int = Field(description="Bytes wasted by duplicates (total_size - file_size)")
+    wasted_space: int = Field(
+        description="Bytes wasted by duplicates (total_size - file_size)"
+    )
 
 
 class DuplicatesResponse(BaseModel):

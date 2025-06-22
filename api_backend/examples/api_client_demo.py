@@ -75,7 +75,7 @@ class FileIndexerClient:
             "limit": limit,
             "offset": offset,
         }
-        
+
         if min_file_size is not None:
             params["min_file_size"] = min_file_size
         if max_file_size is not None:
@@ -89,9 +89,13 @@ class FileIndexerClient:
         response.raise_for_status()
         return response.json()
 
-    def find_duplicates_advanced(self, duplicates_request: dict[str, Any]) -> dict[str, Any]:
+    def find_duplicates_advanced(
+        self, duplicates_request: dict[str, Any]
+    ) -> dict[str, Any]:
         """Find duplicate files using POST with advanced parameters."""
-        response = self.session.post(f"{self.base_url}/duplicates/", json=duplicates_request)
+        response = self.session.post(
+            f"{self.base_url}/duplicates/", json=duplicates_request
+        )
         response.raise_for_status()
         return response.json()
 
@@ -206,13 +210,15 @@ def main():
         print(
             f"Found {duplicates['total_groups']} duplicate groups with {duplicates['total_duplicate_files']} total duplicate files"
         )
-        print(f"Total wasted space: {format_file_size(duplicates['total_wasted_space'])}")
+        print(
+            f"Total wasted space: {format_file_size(duplicates['total_wasted_space'])}"
+        )
         print(f"Has more results: {duplicates['has_more']}")
 
         if duplicates["duplicate_groups"]:
             print("Top 5 duplicate groups:")
             for i, group in enumerate(duplicates["duplicate_groups"]):
-                wasted_mb = group['wasted_space'] / (1024 * 1024)
+                wasted_mb = group["wasted_space"] / (1024 * 1024)
                 print(
                     f"\n  Group {i + 1}: {group['file_count']} files, {format_file_size(group['file_size'])} each"
                 )
@@ -227,11 +233,9 @@ def main():
         print("\n5b. Large Duplicate Files (>10MB)")
         large_duplicates = client.find_duplicates(
             min_file_size=10 * 1024 * 1024,  # 10MB
-            limit=3
+            limit=3,
         )
-        print(
-            f"Found {large_duplicates['total_groups']} large duplicate groups"
-        )
+        print(f"Found {large_duplicates['total_groups']} large duplicate groups")
         if large_duplicates["duplicate_groups"]:
             for i, group in enumerate(large_duplicates["duplicate_groups"]):
                 print(
@@ -241,15 +245,12 @@ def main():
 
         # 7. Find duplicates by filename pattern
         print("\n5c. Find Duplicates by Filename Pattern")
-        jpg_duplicates = client.find_duplicates(
-            filename_pattern="%.jpg",
-            limit=3
-        )
-        print(
-            f"Found {jpg_duplicates['total_groups']} duplicate groups for JPG files"
-        )
+        jpg_duplicates = client.find_duplicates(filename_pattern="%.jpg", limit=3)
+        print(f"Found {jpg_duplicates['total_groups']} duplicate groups for JPG files")
         if jpg_duplicates["duplicate_groups"]:
-            print("  Note: This finds ALL duplicates of JPG files, even if some duplicates are not JPGs")
+            print(
+                "  Note: This finds ALL duplicates of JPG files, even if some duplicates are not JPGs"
+            )
             for i, group in enumerate(jpg_duplicates["duplicate_groups"]):
                 print(
                     f"  JPG group {i + 1}: {group['file_count']} files, {format_file_size(group['file_size'])} each"
@@ -259,8 +260,7 @@ def main():
         # 8. Find duplicates by path pattern
         print("\n5d. Find Duplicates by Path Pattern")
         downloads_duplicates = client.find_duplicates(
-            path_pattern="%Downloads%",
-            limit=2
+            path_pattern="%Downloads%", limit=2
         )
         print(
             f"Found {downloads_duplicates['total_groups']} duplicate groups for files in Downloads folders"
@@ -278,15 +278,19 @@ def main():
             "filename_pattern": "%.pdf",
             "min_file_size": 100000,  # 100KB minimum
             "min_group_size": 2,
-            "limit": 3
+            "limit": 3,
         }
         pdf_duplicates = client.find_duplicates_advanced(pattern_request)
         print(
             f"Found {pdf_duplicates['total_groups']} duplicate groups for PDF files >100KB"
         )
         if pdf_duplicates["duplicate_groups"]:
-            print("  Note: These groups include ALL duplicates of PDFs matching the pattern,")
-            print("        even if the duplicates themselves are not PDFs or don't match the size criteria.")
+            print(
+                "  Note: These groups include ALL duplicates of PDFs matching the pattern,"
+            )
+            print(
+                "        even if the duplicates themselves are not PDFs or don't match the size criteria."
+            )
             for i, group in enumerate(pdf_duplicates["duplicate_groups"]):
                 print(
                     f"  PDF group {i + 1}: {group['file_count']} files, {format_file_size(group['file_size'])} each"
