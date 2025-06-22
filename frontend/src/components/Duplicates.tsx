@@ -44,7 +44,7 @@ export const Duplicates: React.FC = () => {
 
   useEffect(() => {
     loadDuplicates();
-  }, [minGroupSize, minFileSize, maxFileSize, filenamePattern, pathPattern, currentPage, itemsPerPage]);
+  }, [minGroupSize, minFileSize, maxFileSize, currentPage, itemsPerPage]);
 
   const loadDuplicates = async () => {
     try {
@@ -135,6 +135,11 @@ export const Duplicates: React.FC = () => {
     return unit === 'GB' ? num * 1024 * 1024 * 1024 : num * 1024 * 1024;
   };
 
+  const applyFilters = () => {
+    setCurrentPage(1); // Reset to first page when applying new filters
+    loadDuplicates();
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -195,8 +200,10 @@ export const Duplicates: React.FC = () => {
                     value={searchTerm}
                     onChange={(e) => {
                       setSearchTerm(e.target.value);
-                      setCurrentPage(1);
                     }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    autoComplete="off"
+                    spellCheck={false}
                     className="input pl-10 text-sm"
                   />
                 </div>
@@ -206,12 +213,14 @@ export const Duplicates: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Filename Pattern</label>
                 <input
                   type="text"
-                  placeholder="*.jpg, *.pdf, report*..."
+                  placeholder="%.jpg, %.pdf, report%..."
                   value={filenamePattern}
                   onChange={(e) => {
                     setFilenamePattern(e.target.value);
-                    setCurrentPage(1);
                   }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  autoComplete="off"
+                  spellCheck={false}
                   className="input text-sm"
                 />
               </div>
@@ -220,12 +229,14 @@ export const Duplicates: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Path Pattern</label>
                 <input
                   type="text"
-                  placeholder="*/Downloads/*, */Pictures/*..."
+                  placeholder="%/Downloads/%, %/Pictures/%..."
                   value={pathPattern}
                   onChange={(e) => {
                     setPathPattern(e.target.value);
-                    setCurrentPage(1);
                   }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  autoComplete="off"
+                  spellCheck={false}
                   className="input text-sm"
                 />
               </div>
@@ -264,7 +275,7 @@ export const Duplicates: React.FC = () => {
             </div>
 
             {/* Size filters row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Minimum File Size</label>
                 <div className="flex space-x-2">
@@ -282,8 +293,9 @@ export const Duplicates: React.FC = () => {
                         const size = parseSizeFromInput(e.target.value, unit);
                         setMinFileSize(size);
                       }
-                      setCurrentPage(1);
                     }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    autoComplete="off"
                     className="input text-sm w-24"
                   />
                   <select
@@ -293,7 +305,6 @@ export const Duplicates: React.FC = () => {
                         const currentValue = formatSizeForInput(minFileSize);
                         const size = parseSizeFromInput(currentValue, e.target.value);
                         setMinFileSize(size);
-                        setCurrentPage(1);
                       }
                     }}
                     className="input w-16 text-sm"
@@ -320,8 +331,9 @@ export const Duplicates: React.FC = () => {
                         const size = parseSizeFromInput(e.target.value, maxFileSize && maxFileSize >= 1024 * 1024 * 1024 ? 'GB' : 'MB');
                         setMaxFileSize(size);
                       }
-                      setCurrentPage(1);
                     }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    autoComplete="off"
                     className="input text-sm w-24"
                   />
                   <select
@@ -331,7 +343,6 @@ export const Duplicates: React.FC = () => {
                         const currentValue = formatSizeForInput(maxFileSize);
                         const size = parseSizeFromInput(currentValue, e.target.value);
                         setMaxFileSize(size);
-                        setCurrentPage(1);
                       }
                     }}
                     className="input w-16 text-sm"
@@ -340,6 +351,16 @@ export const Duplicates: React.FC = () => {
                     <option value="GB">GB</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="flex items-end">
+                <button
+                  onClick={applyFilters}
+                  className="btn btn-primary text-sm w-full flex items-center justify-center space-x-2"
+                >
+                  <Search className="h-4 w-4" />
+                  <span>Apply Filters</span>
+                </button>
               </div>
 
               <div className="flex items-end">
