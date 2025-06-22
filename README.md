@@ -117,7 +117,7 @@ indexer.index_files_without_checksums("/path/to/directory")
 indexer.calculate_checksums_for_duplicates()
 
 # Search and analysis
-duplicates = indexer.find_duplicates()
+indexer.find_duplicates()  # Prints duplicates to console
 files_without_checksums = indexer.search_files(has_checksum=False)
 stats = indexer.get_stats()
 
