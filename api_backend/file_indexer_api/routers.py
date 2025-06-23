@@ -33,7 +33,9 @@ health_router = APIRouter(prefix="/health", tags=["Health"])
 
 
 @health_router.get("/", response_model=HealthCheck)
-async def health_check(db: Annotated[DatabaseService, Depends(get_database_service)]) -> HealthCheck:
+async def health_check(
+    db: Annotated[DatabaseService, Depends(get_database_service)],
+) -> HealthCheck:
     """Health check endpoint."""
     try:
         file_count = db.get_file_count() if db.is_connected() else 0

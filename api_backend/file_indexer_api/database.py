@@ -448,7 +448,7 @@ class DatabaseService:
             MIN(modification_datetime) as oldest_modification
         FROM files
         """).fetchone()
-        
+
         if basic_stats_result is None:
             raise RuntimeError("Failed to get basic stats from database")
 
@@ -466,7 +466,7 @@ class DatabaseService:
             COALESCE(SUM(file_count), 0) as duplicate_files
         FROM duplicate_checksums
         """).fetchone()
-        
+
         if duplicate_stats_result is None:
             raise RuntimeError("Failed to get duplicate stats from database")
 
@@ -474,7 +474,7 @@ class DatabaseService:
         unique_dirs_result = self.conn.execute("""
         SELECT COUNT(DISTINCT path) FROM files
         """).fetchone()
-        
+
         if unique_dirs_result is None:
             raise RuntimeError("Failed to get unique directories from database")
 
