@@ -30,6 +30,31 @@ file-indexer-api = "file_indexer_api.main:run_server"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.coverage.run]
+relative_files = true
+source = ["file_indexer_api"]
+
+[tool.coverage.paths]
+source = [
+    "file_indexer_api/",
+    "./file_indexer_api/",
+    "api_backend/file_indexer_api/"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"
