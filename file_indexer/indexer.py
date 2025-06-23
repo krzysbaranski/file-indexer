@@ -800,36 +800,101 @@ class FileIndexer:
         ]
         return [dict(zip(columns, row, strict=True)) for row in results]
 
-    def find_duplicates(self) -> list[dict]:
-        """
-        Find files with duplicate checksums (excluding files without checksums).
+    def find_duplicates_streaming(
+        self, batch_size: int = 1000
+    ) -> Generator[list[tuple], None, None]:
+        """Find duplicate files and yield results in batches for immediate processing."""
 
-        Returns:
-            List of file records with duplicate checksums
-        """
+        # Optimized query using self-join
         query = """
-        SELECT * FROM files
-        WHERE checksum IS NOT NULL
-        AND checksum IN (
-            SELECT checksum
-            FROM files
-            WHERE checksum IS NOT NULL
-            GROUP BY checksum
-            HAVING COUNT(*) > 1
-        )
-        ORDER BY checksum, path, filename
+            SELECT f1.path, f1.filename, f1.file_size, f1.checksum, f1.modification_datetime
+            FROM files f1
+            INNER JOIN files f2 ON f1.checksum = f2.checksum
+            WHERE f1.checksum IS NOT NULL
+            AND f1.rowid != f2.rowid
+            ORDER BY f1.checksum, f1.path, f1.filename
         """
 
-        results = self.conn.execute(query).fetchall()
-        columns = [
-            "path",
-            "filename",
-            "checksum",
-            "modification_datetime",
-            "file_size",
-            "indexed_at",
-        ]
-        return [dict(zip(columns, row, strict=True)) for row in results]
+        cursor = self.conn.cursor()
+        cursor.execute(query)
+
+        current_checksum = None
+        duplicate_group: list[tuple] = []
+
+        while True:
+            # Fetch results in batches to avoid loading everything into memory
+            batch = cursor.fetchmany(batch_size)
+            if not batch:
+                # Yield the last group if it exists
+                if duplicate_group:
+                    yield duplicate_group
+                break
+
+            for row in batch:
+                checksum = row[3]  # checksum column
+
+                if current_checksum != checksum:
+                    # New checksum group - yield the previous group
+                    if duplicate_group:
+                        yield duplicate_group
+
+                    # Start new group
+                    current_checksum = checksum
+                    duplicate_group = [row]
+                else:
+                    # Same checksum - add to current group
+                    duplicate_group.append(row)
+
+    def find_duplicates(self) -> None:
+        """Print duplicates as they're found, with progress indication."""
+        print("Searching for duplicate files...")
+
+        duplicate_count = 0
+        groups_found = 0
+        total_wasted_space = 0
+
+        for duplicate_group in self.find_duplicates_streaming():
+            groups_found += 1
+            group_size = len(duplicate_group)
+            duplicate_count += group_size
+
+            # Calculate wasted space (all files except the first one)
+            file_size = duplicate_group[0][2]  # file_size column
+            wasted_space = file_size * (group_size - 1)
+            total_wasted_space += wasted_space
+
+            # Print results immediately
+            print(
+                f"\n--- Duplicate Group {groups_found} (Checksum: {duplicate_group[0][3][:16]}...) ---"
+            )
+            print(
+                f"Files: {group_size}, Wasted space: {self._format_size(wasted_space)}"
+            )
+
+            for i, (path, filename, size, _checksum, _modified) in enumerate(
+                duplicate_group
+            ):
+                status = "ORIGINAL" if i == 0 else "DUPLICATE"
+                print(f"  [{status}] {path}/{filename} ({self._format_size(size)})")
+
+            # Progress update every 10 groups
+            if groups_found % 10 == 0:
+                print(
+                    f"\n[Progress: {groups_found} duplicate groups found, {duplicate_count} duplicate files]"
+                )
+
+        print("\n=== SUMMARY ===")
+        print(f"Duplicate groups found: {groups_found}")
+        print(f"Total duplicate files: {duplicate_count}")
+        print(f"Total wasted space: {self._format_size(total_wasted_space)}")
+
+    def _format_size(self, size_bytes: int | float) -> str:
+        """Format file size in human readable format."""
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} PB"
 
     def get_stats(self) -> dict:
         """Get database statistics including performance optimization metrics."""
@@ -1012,65 +1077,30 @@ class FileIndexer:
                 f"  Checked {checked_directories:,}/{total_directories:,} directories..."
             )
 
-    def _delete_files_from_deleted_directories(
-        self,
-        deleted_directories: set[str],
-        files_by_directory: dict[str, list[tuple[str, int, str]]],
-        batch_size: int,
-    ) -> None:
-        """
-        Delete database records for all files in directories that were entirely deleted.
-
-        Args:
-            deleted_directories: Set of directory paths that no longer exist
-            files_by_directory: Dict mapping directory paths to their file lists
-            batch_size: Number of files to delete in each batch
-        """
-        if not deleted_directories:
-            return
-
-        directory_files_to_delete = []
-        for directory_path in deleted_directories:
-            for filename, _, _ in files_by_directory[directory_path]:
-                directory_files_to_delete.append((directory_path, filename))
-
-        if directory_files_to_delete:
-            # Process in batches to avoid overwhelming the database
-            for i in range(0, len(directory_files_to_delete), batch_size):
-                batch = directory_files_to_delete[i : i + batch_size]
-                self._delete_files_from_database(batch)
-
     def cleanup_deleted_files(
-        self, batch_size: int = 1000, dry_run: bool = False
+        self, batch_size: int = 1000, page_size: int = 10000
     ) -> dict:
         """
         Check for deleted files and directories, and clean up the database.
+        Uses cursor-based pagination to handle deletions properly.
         Optimized to check directories first to reduce filesystem calls.
 
         Args:
             batch_size: Number of files to check in each batch
-            dry_run: If True, only report what would be deleted without actually deleting
+            page_size: Number of files to load from database in each page
 
         Returns:
             Dictionary with cleanup statistics
         """
         print("Starting database cleanup for deleted files...")
-        if dry_run:
-            print("DRY RUN MODE: No files will be deleted from database")
 
         # Reset deleted files counter
         self.deleted_files = 0
 
-        # Get all files from database grouped by directory
-        print("Retrieving all files from database...")
-        all_files_query = """
-        SELECT path, filename, file_size, indexed_at
-        FROM files
-        ORDER BY path, filename
-        """
-
-        all_files = self.conn.execute(all_files_query).fetchall()
-        total_db_files = len(all_files)
+        # Get total count first
+        count_query = "SELECT COUNT(*) FROM files"
+        count_result = self.conn.execute(count_query).fetchone()
+        total_db_files = count_result[0] if count_result else 0
         print(f"Found {total_db_files:,} files in database")
 
         if total_db_files == 0:
@@ -1080,199 +1110,365 @@ class FileIndexer:
                 "deleted_files": 0,
                 "deleted_directories": 0,
                 "permission_errors": 0,
-                "dry_run": dry_run,
             }
 
-        # Group files by directory for efficient checking
-        print("Grouping files by directory for optimization...")
-        files_by_directory: dict[str, list[tuple[str, int, str]]] = {}
-        for path, filename, file_size, indexed_at in all_files:
-            if path not in files_by_directory:
-                files_by_directory[path] = []
-            files_by_directory[path].append((filename, file_size, indexed_at))
+        # Track statistics across all pages
+        total_deleted_files: list[tuple[str, str]] = []
+        total_deleted_directories: set[str] = set()
+        total_permission_errors = 0
+        total_checked_files = 0
+        total_checked_directories = 0
+        total_files_deleted_by_directory = 0
+        total_files_deleted_individually = 0
 
-        print(f"Found {len(files_by_directory):,} unique directories")
+        # Use cursor-based pagination to handle deletions properly
+        # We'll process files in chunks and collect deletions to do at the end of each page
+        page_num = 1
+        last_path = ""
+        last_filename = ""
 
-        # Track statistics
-        deleted_files: list[tuple[str, str]] = []
-        deleted_directories: set[str] = set()
-        permission_errors = 0
-        checked_files = 0
-        checked_directories = 0
-        files_deleted_by_directory = (
-            0  # Files deleted because their directory was deleted
-        )
-        files_deleted_individually = 0  # Files deleted after individual checks
+        while True:
+            print(f"\n--- Processing page {page_num} ---")
 
-        # Phase 1: Check directories first
-        print("Phase 1: Checking directories...")
-        directories_to_process_individually: dict[str, list[tuple[str, int, str]]] = {}
+            # Get page of files from database using cursor-based pagination
+            # This ensures we don't skip records when deleting
+            if page_num == 1:
+                page_query = """
+                SELECT path, filename, file_size, indexed_at
+                FROM files
+                ORDER BY path, filename
+                LIMIT ?
+                """
+                page_files = self.conn.execute(page_query, (page_size,)).fetchall()
+            else:
+                page_query = """
+                SELECT path, filename, file_size, indexed_at
+                FROM files
+                WHERE (path > ? OR (path = ? AND filename > ?))
+                ORDER BY path, filename
+                LIMIT ?
+                """
+                page_files = self.conn.execute(
+                    page_query, (last_path, last_path, last_filename, page_size)
+                ).fetchall()
 
-        for directory_path, files_in_dir in files_by_directory.items():
-            checked_directories += 1
+            if not page_files:
+                break
 
-            # Check if directory exists
-            exists, error_message = self._check_directory_existence(directory_path)
+            print(f"Processing {len(page_files):,} files in this page...")
 
-            if error_message:
-                # Handle access errors (permission denied, OS errors)
-                perm_errors, files_marked = self._handle_directory_access_error(
+            # Remember the last record for next page cursor
+            last_path, last_filename = page_files[-1][0], page_files[-1][1]
+
+            # Group files by directory for efficient checking
+            files_by_directory: dict[str, list[tuple[str, int, str]]] = {}
+            for path, filename, file_size, indexed_at in page_files:
+                if path not in files_by_directory:
+                    files_by_directory[path] = []
+                files_by_directory[path].append((filename, file_size, indexed_at))
+
+            print(f"Found {len(files_by_directory):,} unique directories in this page")
+
+            # Track statistics for this page
+            page_deleted_files: list[tuple[str, str]] = []
+            page_deleted_directories: set[str] = set()
+            page_permission_errors = 0
+            page_checked_files = 0
+            page_checked_directories = 0
+            page_files_deleted_by_directory = 0
+            page_files_deleted_individually = 0
+
+            # Phase 1: Check directories first
+            print("Phase 1: Checking directories...")
+            directories_to_process_individually: dict[
+                str, list[tuple[str, int, str]]
+            ] = {}
+
+            # Track deleted parent directories for hierarchical optimization
+            deleted_parent_paths: set[str] = set()
+
+            for directory_path, files_in_dir in files_by_directory.items():
+                page_checked_directories += 1
+
+                # Hierarchical optimization: Skip if this is a subdirectory of an already deleted parent
+                if self._is_subdirectory_of_deleted_paths(
+                    directory_path, deleted_parent_paths
+                ):
+                    print(
+                        f"  Skipping {directory_path} (parent directory already deleted)"
+                    )
+                    # Mark all files as deleted since parent is deleted
+                    files_marked = self._mark_directory_files_as_deleted(
+                        directory_path,
+                        files_in_dir,
+                        page_deleted_files,
+                        page_deleted_directories,
+                    )
+                    page_files_deleted_by_directory += files_marked
+                    page_checked_files += files_marked
+                    continue
+
+                # Check if directory exists
+                exists, error_message = self._check_directory_existence(directory_path)
+
+                if error_message:
+                    # Handle access errors (permission denied, OS errors)
+                    perm_errors, files_marked = self._handle_directory_access_error(
+                        directory_path,
+                        files_in_dir,
+                        error_message,
+                        directories_to_process_individually,
+                        page_deleted_files,
+                        page_deleted_directories,
+                    )
+                    page_permission_errors += perm_errors
+                    page_files_deleted_by_directory += files_marked
+                    page_checked_files += files_marked
+                elif not exists:
+                    # Directory doesn't exist - mark all files as deleted
+                    files_marked = self._mark_directory_files_as_deleted(
+                        directory_path,
+                        files_in_dir,
+                        page_deleted_files,
+                        page_deleted_directories,
+                    )
+                    page_files_deleted_by_directory += files_marked
+                    page_checked_files += files_marked
+
+                    # Add to deleted parent paths for hierarchical optimization
+                    deleted_parent_paths.add(directory_path)
+                else:
+                    # Directory exists - need to check individual files
+                    directories_to_process_individually[directory_path] = files_in_dir
+
+                # Progress reporting
+                self._report_phase1_progress(
+                    page_checked_directories, len(files_by_directory)
+                )
+
+            print(
+                f"Phase 1 completed: {len(page_deleted_directories):,} directories deleted entirely"
+            )
+            print(
+                f"  Files marked as deleted due to directory deletion: {page_files_deleted_by_directory:,}"
+            )
+            print(
+                f"  Directories needing individual file checks: {len(directories_to_process_individually):,}"
+            )
+
+            # Phase 2: Check individual files in remaining directories
+            if directories_to_process_individually:
+                print("Phase 2: Checking individual files in existing directories...")
+
+                # Process remaining files in batches
+                remaining_files = []
+                for (
                     directory_path,
                     files_in_dir,
-                    error_message,
-                    directories_to_process_individually,
-                    deleted_files,
-                    deleted_directories,
-                )
-                permission_errors += perm_errors
-                files_deleted_by_directory += files_marked
-                checked_files += files_marked
-            elif not exists:
-                # Directory doesn't exist - mark all files as deleted
-                files_marked = self._mark_directory_files_as_deleted(
-                    directory_path, files_in_dir, deleted_files, deleted_directories
-                )
-                files_deleted_by_directory += files_marked
-                checked_files += files_marked
-            else:
-                # Directory exists - need to check individual files
-                directories_to_process_individually[directory_path] = files_in_dir
+                ) in directories_to_process_individually.items():
+                    for filename, file_size, indexed_at in files_in_dir:
+                        remaining_files.append(
+                            (directory_path, filename, file_size, indexed_at)
+                        )
 
-            # Progress reporting
-            self._report_phase1_progress(checked_directories, len(files_by_directory))
+                print(f"Checking {len(remaining_files):,} individual files...")
 
-        print(
-            f"Phase 1 completed: {len(deleted_directories):,} directories deleted entirely"
-        )
-        print(
-            f"  Files marked as deleted due to directory deletion: {files_deleted_by_directory:,}"
-        )
-        print(
-            f"  Directories needing individual file checks: {len(directories_to_process_individually):,}"
-        )
+                # Process in batches to avoid overwhelming the filesystem
+                for i in range(0, len(remaining_files), batch_size):
+                    batch = remaining_files[i : i + batch_size]
+                    batch_deleted = 0
 
-        # Phase 2: Check individual files in remaining directories
-        if directories_to_process_individually:
-            print("Phase 2: Checking individual files in existing directories...")
+                    for directory_path, filename, _file_size, _indexed_at in batch:
+                        page_checked_files += 1
+                        file_path = Path(directory_path) / filename
 
-            # Process remaining files in batches
-            remaining_files = []
-            for (
-                directory_path,
-                files_in_dir,
-            ) in directories_to_process_individually.items():
-                for filename, file_size, indexed_at in files_in_dir:
-                    remaining_files.append(
-                        (directory_path, filename, file_size, indexed_at)
-                    )
+                        try:
+                            if not Path(file_path).exists():
+                                page_deleted_files.append((directory_path, filename))
+                                batch_deleted += 1
+                                page_files_deleted_individually += 1
+                        except (PermissionError, OSError) as e:
+                            print(f"  Permission/OS error checking {file_path}: {e}")
+                            page_permission_errors += 1
 
-            for i in range(0, len(remaining_files), batch_size):
-                batch = remaining_files[i : i + batch_size]
-                batch_deleted = []
-
-                for path, filename, _file_size, _indexed_at in batch:
-                    checked_files += 1
-                    full_path = Path(path) / filename
-
-                    try:
-                        # Check if individual file exists
-                        if not full_path.exists():
-                            deleted_files.append((path, filename))
-                            batch_deleted.append((path, filename))
-                            files_deleted_individually += 1
-
-                        # Progress reporting
-                        if checked_files % 5000 == 0:
-                            print(
-                                f"  Checked {checked_files:,}/{total_db_files:,} files..."
-                            )
-
-                    except PermissionError:
-                        permission_errors += 1
-                        print(f"Permission denied checking: {full_path}")
-                    except OSError as e:
-                        # Other filesystem errors - treat as missing file
-                        print(f"Error checking file {full_path}: {e}")
-                        deleted_files.append((path, filename))
-                        batch_deleted.append((path, filename))
-                        files_deleted_individually += 1
-
-                # Delete this batch from database if not dry run
-                if batch_deleted and not dry_run:
-                    self._delete_files_from_database(batch_deleted)
+                    if batch_deleted > 0:
+                        print(
+                            f"  Found {batch_deleted:,} deleted files in batch {i // batch_size + 1}"
+                        )
 
             print(
-                f"Phase 2 completed: {files_deleted_individually:,} individual files deleted"
+                f"Phase 2 completed: {page_files_deleted_individually:,} individual files marked as deleted"
             )
 
-        # Delete files from directories that were entirely deleted (if not already done in batches)
-        if deleted_directories and not dry_run:
-            self._delete_files_from_deleted_directories(
-                deleted_directories, files_by_directory, batch_size
-            )
+            # Delete all marked files from database at the end of the page
+            if page_deleted_files:
+                print(f"Deleting {len(page_deleted_files):,} files from database...")
+                self._delete_files_from_database(page_deleted_files)
 
-        # Report results
-        print("\nCleanup scan completed:")
-        print(f"  Directories checked: {checked_directories:,}")
-        print(f"  Files checked: {checked_files:,}")
-        print(f"  Files found to be deleted: {len(deleted_files):,}")
-        print(
-            f"    - Deleted due to directory deletion: {files_deleted_by_directory:,}"
-        )
-        print(f"    - Deleted individually: {files_deleted_individually:,}")
-        print(f"  Directories no longer existing: {len(deleted_directories):,}")
+            # Update totals
+            total_deleted_files.extend(page_deleted_files)
+            total_deleted_directories.update(page_deleted_directories)
+            total_permission_errors += page_permission_errors
+            total_checked_files += page_checked_files
+            total_checked_directories += page_checked_directories
+            total_files_deleted_by_directory += page_files_deleted_by_directory
+            total_files_deleted_individually += page_files_deleted_individually
 
-        if permission_errors > 0:
-            print(f"  Permission errors: {permission_errors:,}")
+            print(f"Page {page_num} completed:")
+            print(f"  Files checked: {page_checked_files:,}")
+            print(f"  Files deleted: {len(page_deleted_files):,}")
+            print(f"  Directories deleted: {len(page_deleted_directories):,}")
+            print(f"  Permission errors: {page_permission_errors:,}")
 
-        # Performance benefit reporting
-        # Without optimization, we would check every file individually
-        # With optimization, we check directories first and skip individual file checks for deleted directories
-        total_potential_checks = total_db_files  # Would check each file individually
-        saved_checks = (
-            files_deleted_by_directory  # Files we didn't need to check individually
-        )
-        if saved_checks > 0:
-            savings_pct = (saved_checks / total_potential_checks) * 100
-            print(
-                f"  Optimization: Saved {saved_checks:,} filesystem calls ({savings_pct:.1f}% reduction)"
-            )
+            page_num += 1
 
-        if deleted_files:
-            print("\nSample of deleted files:")
-            for path, filename in deleted_files[:10]:  # Show first 10
-                print(f"  {Path(path) / filename}")
-            if len(deleted_files) > 10:
-                print(f"  ... and {len(deleted_files) - 10:,} more")
+        # Final summary
+        print("\n=== Cleanup Summary ===")
+        print(f"Total files checked: {total_checked_files:,}")
+        print(f"Total directories checked: {total_checked_directories:,}")
+        print(f"Files deleted from database: {len(total_deleted_files):,}")
+        print(f"  - Due to directory deletion: {total_files_deleted_by_directory:,}")
+        print(f"  - Individual file deletions: {total_files_deleted_individually:,}")
+        print(f"Directories deleted entirely: {len(total_deleted_directories):,}")
+        print(f"Permission/access errors: {total_permission_errors:,}")
 
-        if deleted_directories:
-            print("\nDirectories no longer existing:")
-            for directory in sorted(deleted_directories):
-                print(f"  {directory}")
-
-        # Update counter
-        self.deleted_files = len(deleted_files)
-
-        if not dry_run and deleted_files:
-            print(
-                f"\nDatabase cleanup completed: {len(deleted_files):,} records removed"
-            )
-        elif dry_run and deleted_files:
-            print(
-                f"\nDRY RUN: Would remove {len(deleted_files):,} records from database"
-            )
-        else:
-            print("\nNo cleanup needed - all database files still exist")
+        # Update deleted files counter
+        self.deleted_files = len(total_deleted_files)
 
         return {
-            "total_checked": checked_files,
-            "deleted_files": len(deleted_files),
-            "deleted_directories": len(deleted_directories),
-            "permission_errors": permission_errors,
-            "files_deleted_by_directory": files_deleted_by_directory,
-            "files_deleted_individually": files_deleted_individually,
-            "filesystem_calls_saved": saved_checks if saved_checks > 0 else 0,
-            "dry_run": dry_run,
+            "total_checked": total_checked_files,
+            "deleted_files": len(total_deleted_files),
+            "deleted_directories": len(total_deleted_directories),
+            "permission_errors": total_permission_errors,
+        }
+
+    def cleanup_empty_directories(self, page_size: int = 1000) -> dict:
+        """
+        Remove empty directories from the database.
+        Uses cursor-based pagination to handle large datasets efficiently.
+
+        Args:
+            page_size: Number of directories to process in each page
+
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        print("Starting cleanup of empty directories...")
+
+        # Get total count of unique directories first
+        count_query = "SELECT COUNT(DISTINCT path) FROM files"
+        count_result = self.conn.execute(count_query).fetchone()
+        total_directories = count_result[0] if count_result else 0
+        print(f"Found {total_directories:,} unique directories in database")
+
+        if total_directories == 0:
+            print("No directories in database to check")
+            return {
+                "total_checked": 0,
+                "deleted_directories": 0,
+                "permission_errors": 0,
+            }
+
+        # Track statistics across all pages
+        total_deleted_directories: list[str] = []
+        total_permission_errors = 0
+        total_checked_directories = 0
+
+        # Use cursor-based pagination for directories
+        page_num = 1
+        last_path = ""
+
+        while True:
+            print(f"\n--- Processing page {page_num} ---")
+
+            # Get page of directories from database using cursor-based pagination
+            if page_num == 1:
+                page_query = """
+                SELECT DISTINCT path
+                FROM files
+                ORDER BY path
+                LIMIT ?
+                """
+                page_directories = self.conn.execute(
+                    page_query, (page_size,)
+                ).fetchall()
+            else:
+                page_query = """
+                SELECT DISTINCT path
+                FROM files
+                WHERE path > ?
+                ORDER BY path
+                LIMIT ?
+                """
+                page_directories = self.conn.execute(
+                    page_query, (last_path, page_size)
+                ).fetchall()
+
+            if not page_directories:
+                break
+
+            print(f"Processing {len(page_directories):,} directories in this page...")
+
+            # Remember the last directory for next page cursor
+            last_path = page_directories[-1][0]
+
+            # Track statistics for this page
+            page_deleted_directories: list[str] = []
+            page_permission_errors = 0
+            page_checked_directories = 0
+
+            # Check each directory
+            for (directory_path,) in page_directories:
+                page_checked_directories += 1
+
+                # Check if directory exists and is accessible
+                exists, error_message = self._check_directory_existence(directory_path)
+
+                if error_message:
+                    # Handle access errors (permission denied, OS errors)
+                    print(
+                        f"  Permission/OS error checking directory {directory_path}: {error_message}"
+                    )
+                    page_permission_errors += 1
+                elif not exists:
+                    # Directory doesn't exist - mark for deletion
+                    page_deleted_directories.append(directory_path)
+
+                # Progress reporting
+                if page_checked_directories % 100 == 0:
+                    print(
+                        f"  Checked {page_checked_directories:,}/{len(page_directories):,} directories..."
+                    )
+
+            print(f"Page {page_num} check completed:")
+            print(f"  Directories checked: {page_checked_directories:,}")
+            print(f"  Directories to delete: {len(page_deleted_directories):,}")
+            print(f"  Permission errors: {page_permission_errors:,}")
+
+            # Delete directories from database at the end of the page
+            if page_deleted_directories:
+                print(
+                    f"Deleting {len(page_deleted_directories):,} directories from database..."
+                )
+                self._delete_directories_from_database(page_deleted_directories)
+
+            # Update totals
+            total_deleted_directories.extend(page_deleted_directories)
+            total_permission_errors += page_permission_errors
+            total_checked_directories += page_checked_directories
+
+            page_num += 1
+
+        # Final summary
+        print("\n=== Empty Directory Cleanup Summary ===")
+        print(f"Total directories checked: {total_checked_directories:,}")
+        print(f"Directories deleted from database: {len(total_deleted_directories):,}")
+        print(f"Permission/access errors: {total_permission_errors:,}")
+
+        return {
+            "total_checked": total_checked_directories,
+            "deleted_directories": len(total_deleted_directories),
+            "permission_errors": total_permission_errors,
         }
 
     def _delete_files_from_database(self, file_records: list[tuple[str, str]]) -> None:
@@ -1298,150 +1494,6 @@ class FileIndexer:
         except Exception as e:
             self.conn.execute("ROLLBACK")
             print(f"Database deletion failed: {e}")
-            raise
-
-    def cleanup_empty_directories(self, dry_run: bool = False) -> dict:
-        """
-        Find and optionally remove database records for directories that no longer contain any files.
-
-        Args:
-            dry_run: If True, only report what would be cleaned without actually cleaning
-
-        Returns:
-            Dictionary with cleanup statistics
-        """
-        print("Checking for empty directories in database...")
-        if dry_run:
-            print("DRY RUN MODE: No records will be deleted")
-
-        # Get all unique directories from database
-        directories_query = """
-        SELECT DISTINCT path, COUNT(*) as file_count
-        FROM files
-        GROUP BY path
-        ORDER BY path
-        """
-
-        directories = self.conn.execute(directories_query).fetchall()
-        total_directories = len(directories)
-        print(f"Found {total_directories:,} directories in database")
-
-        if total_directories == 0:
-            return {
-                "total_checked": 0,
-                "empty_directories": 0,
-                "files_in_empty_dirs": 0,
-                "permission_errors": 0,
-                "dry_run": dry_run,
-            }
-
-        empty_directories = []
-        permission_errors = 0
-        files_in_empty_dirs = 0
-        checked_directories = 0
-
-        for directory_path, file_count in directories:
-            checked_directories += 1
-
-            try:
-                path_obj = Path(directory_path)
-
-                # Check if directory exists
-                if not path_obj.exists():
-                    empty_directories.append(directory_path)
-                    files_in_empty_dirs += file_count
-                    continue
-
-                # Check if directory is actually empty
-                if path_obj.is_dir():
-                    try:
-                        # Check if directory has any files (not just what's in our database)
-                        has_files = any(path_obj.iterdir())
-                        if not has_files:
-                            empty_directories.append(directory_path)
-                            files_in_empty_dirs += file_count
-                    except PermissionError:
-                        permission_errors += 1
-                        print(f"Permission denied checking directory: {directory_path}")
-
-                # Progress reporting
-                if checked_directories % 100 == 0:
-                    print(
-                        f"Checked {checked_directories:,}/{total_directories:,} directories..."
-                    )
-
-            except PermissionError:
-                permission_errors += 1
-                print(f"Permission denied checking: {directory_path}")
-            except OSError as e:
-                print(f"Error checking directory {directory_path}: {e}")
-                empty_directories.append(directory_path)
-                files_in_empty_dirs += file_count
-
-        # Remove records for empty directories if not dry run
-        if empty_directories and not dry_run:
-            self._delete_directories_from_database(empty_directories)
-
-        # Report results
-        print("\nEmpty directory scan completed:")
-        print(f"  Directories checked: {checked_directories:,}")
-        print(f"  Empty directories found: {len(empty_directories):,}")
-        print(f"  Files in empty directories: {files_in_empty_dirs:,}")
-
-        if permission_errors > 0:
-            print(f"  Permission errors: {permission_errors:,}")
-
-        if empty_directories:
-            print("\nEmpty directories:")
-            for directory in empty_directories[:20]:  # Show first 20
-                print(f"  {directory}")
-            if len(empty_directories) > 20:
-                print(f"  ... and {len(empty_directories) - 20:,} more")
-
-        if not dry_run and empty_directories:
-            print(
-                f"\nCleaned up {files_in_empty_dirs:,} records from {len(empty_directories):,} empty directories"
-            )
-        elif dry_run and empty_directories:
-            print(
-                f"\nDRY RUN: Would remove {files_in_empty_dirs:,} records from {len(empty_directories):,} empty directories"
-            )
-        else:
-            print("\nNo empty directories found")
-
-        return {
-            "total_checked": checked_directories,
-            "empty_directories": len(empty_directories),
-            "files_in_empty_dirs": files_in_empty_dirs,
-            "permission_errors": permission_errors,
-            "dry_run": dry_run,
-        }
-
-    def _delete_directories_from_database(self, directories: list[str]) -> None:
-        """
-        Delete all file records for the specified directories from the database.
-
-        Args:
-            directories: List of directory paths to delete records for
-        """
-        if not directories:
-            return
-
-        self.conn.execute("BEGIN TRANSACTION")
-
-        try:
-            # Use IN clause for efficient deletion
-            placeholders = ",".join(["?"] * len(directories))
-            delete_sql = f"""
-            DELETE FROM files
-            WHERE path IN ({placeholders})
-            """
-            self.conn.execute(delete_sql, directories)
-            self.conn.execute("COMMIT")
-
-        except Exception as e:
-            self.conn.execute("ROLLBACK")
-            print(f"Database directory deletion failed: {e}")
             raise
 
     def close(self) -> None:
@@ -1749,3 +1801,68 @@ class FileIndexer:
         except OSError as e:
             print(f"Error accessing file {file_path}: {e}")
             return None
+
+    def create_checksum_index(self) -> None:
+        """Create index on checksum column for faster duplicate detection."""
+        try:
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_checksum ON files(checksum)"
+            )
+            print("Checksum index created/verified")
+        except Exception as e:
+            print(f"Note: Could not create index: {e}")
+
+    def _delete_directories_from_database(self, directories: list[str]) -> None:
+        """
+        Delete all file records for the specified directories from the database.
+
+        Args:
+            directories: List of directory paths to delete records for
+        """
+        if not directories:
+            return
+
+        self.conn.execute("BEGIN TRANSACTION")
+
+        try:
+            # Use IN clause for efficient deletion
+            placeholders = ",".join(["?"] * len(directories))
+            delete_sql = f"""
+            DELETE FROM files
+            WHERE path IN ({placeholders})
+            """
+            self.conn.execute(delete_sql, directories)
+            self.conn.execute("COMMIT")
+
+        except Exception as e:
+            self.conn.execute("ROLLBACK")
+            print(f"Database directory deletion failed: {e}")
+            raise
+
+    def _is_subdirectory_of_deleted_paths(
+        self, path: str, deleted_parent_paths: set[str]
+    ) -> bool:
+        """
+        Check if the given path is a subdirectory of any deleted parent paths.
+
+        Args:
+            path: Path to check
+            deleted_parent_paths: Set of parent paths that are known to be deleted
+
+        Returns:
+            True if path is a subdirectory of any deleted parent path
+        """
+        path_obj = Path(path)
+
+        # Check if any parent path is in the deleted set
+        for deleted_path in deleted_parent_paths:
+            deleted_path_obj = Path(deleted_path)
+            try:
+                # Check if path is relative to deleted_path (i.e., is a subdirectory)
+                path_obj.relative_to(deleted_path_obj)
+                return True
+            except ValueError:
+                # Not a subdirectory, continue checking
+                continue
+
+        return False

@@ -63,3 +63,67 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
         verbose: true
+
+  api-backend-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+    
+    - name: Load cached venv for API backend
+      id: cached-api-poetry-dependencies
+      uses: actions/cache@v3
+      with:
+        path: api_backend/.venv
+        key: venv-api-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('api_backend/poetry.lock') }}
+    
+    - name: Install API backend dependencies
+      if: steps.cached-api-poetry-dependencies.outputs.cache-hit != 'true'
+      working-directory: ./api_backend
+      run: poetry install --no-interaction --no-root
+    
+    - name: Install API backend project
+      working-directory: ./api_backend
+      run: poetry install --no-interaction
+    
+    - name: Run API backend ruff linting
+      working-directory: ./api_backend
+      run: poetry run ruff check .
+    
+    - name: Run API backend ruff formatting check
+      working-directory: ./api_backend
+      run: poetry run ruff format --check .
+    
+    - name: Run API backend mypy type checking
+      working-directory: ./api_backend
+      run: poetry run mypy file_indexer_api/
+    
+    - name: Run API backend tests
+      working-directory: ./api_backend
+      run: poetry run pytest tests/ -v --cov=file_indexer_api --cov-branch --cov-report=xml
+    
+    - name: Upload API backend coverage reports to Codecov
+      if: matrix.python-version == '3.12'
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+        verbose: true
+        working-directory: ./api_backend

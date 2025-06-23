@@ -21,6 +21,7 @@ pytest-asyncio = "^0.23.0"
 httpx = "^0.25.0"
 ruff = "^0.6.0"
 mypy = "^1.11.0"
+pytest-cov = "^6.2.1"
 
 [tool.poetry.scripts]
 file-indexer-api = "file_indexer_api.main:run_server"
