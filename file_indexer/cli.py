@@ -197,18 +197,7 @@ def main() -> None:
             else:
                 print("No matching files found.")
         elif args.find_duplicates:
-            duplicates = indexer.find_duplicates()
-            if duplicates:
-                print(f"Found {len(duplicates)} duplicate files:")
-                current_checksum = None
-                for dup in duplicates:
-                    if dup["checksum"] != current_checksum:
-                        current_checksum = dup["checksum"]
-                        print(f"\nChecksum {current_checksum}:")
-                    size_display = format_size(dup["file_size"])
-                    print(f"  {dup['path']}/{dup['filename']} ({size_display})")
-            else:
-                print("No duplicate files found.")
+            indexer.find_duplicates()
         elif args.stats:
             stats = indexer.get_stats()
             print("Database Statistics:")

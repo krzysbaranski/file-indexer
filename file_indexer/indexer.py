@@ -800,7 +800,7 @@ class FileIndexer:
         ]
         return [dict(zip(columns, row, strict=True)) for row in results]
 
-    def find_duplicates_streaming(self, batch_size=1000):
+    def find_duplicates_streaming(self, batch_size: int = 1000) -> Generator[list[tuple], None, None]:
         """Find duplicate files and yield results in batches for immediate processing."""
 
         # Optimized query using self-join
@@ -817,7 +817,7 @@ class FileIndexer:
         cursor.execute(query)
 
         current_checksum = None
-        duplicate_group = []
+        duplicate_group: list[tuple] = []
 
         while True:
             # Fetch results in batches to avoid loading everything into memory
@@ -843,7 +843,7 @@ class FileIndexer:
                     # Same checksum - add to current group
                     duplicate_group.append(row)
 
-    def find_duplicates(self):
+    def find_duplicates(self) -> None:
         """Print duplicates as they're found, with progress indication."""
         print("Searching for duplicate files...")
 
@@ -886,7 +886,7 @@ class FileIndexer:
         print(f"Total duplicate files: {duplicate_count}")
         print(f"Total wasted space: {self._format_size(total_wasted_space)}")
 
-    def _format_size(self, size_bytes):
+    def _format_size(self, size_bytes: int | float) -> str:
         """Format file size in human readable format."""
         for unit in ["B", "KB", "MB", "GB", "TB"]:
             if size_bytes < 1024.0:
@@ -1097,7 +1097,8 @@ class FileIndexer:
 
         # Get total count first
         count_query = "SELECT COUNT(*) FROM files"
-        total_db_files = self.conn.execute(count_query).fetchone()[0]
+        count_result = self.conn.execute(count_query).fetchone()
+        total_db_files = count_result[0] if count_result else 0
         print(f"Found {total_db_files:,} files in database")
 
         if total_db_files == 0:
@@ -1354,7 +1355,8 @@ class FileIndexer:
 
         # Get total count of unique directories first
         count_query = "SELECT COUNT(DISTINCT path) FROM files"
-        total_directories = self.conn.execute(count_query).fetchone()[0]
+        count_result = self.conn.execute(count_query).fetchone()
+        total_directories = count_result[0] if count_result else 0
         print(f"Found {total_directories:,} unique directories in database")
 
         if total_directories == 0:
@@ -1798,7 +1800,7 @@ class FileIndexer:
             print(f"Error accessing file {file_path}: {e}")
             return None
 
-    def create_checksum_index(self):
+    def create_checksum_index(self) -> None:
         """Create index on checksum column for faster duplicate detection."""
         try:
             self.conn.execute(
