@@ -33,7 +33,7 @@ health_router = APIRouter(prefix="/health", tags=["Health"])
 
 
 @health_router.get("/", response_model=HealthCheck)
-async def health_check(db: Annotated[DatabaseService, Depends(get_database_service)]):
+async def health_check(db: Annotated[DatabaseService, Depends(get_database_service)]) -> HealthCheck:
     """Health check endpoint."""
     try:
         file_count = db.get_file_count() if db.is_connected() else 0
@@ -65,7 +65,7 @@ search_router = APIRouter(prefix="/search", tags=["Search"])
 async def search_files(
     search_request: SearchRequest,
     db: Annotated[DatabaseService, Depends(get_database_service)],
-):
+) -> SearchResponse:
     """Search for files based on various criteria."""
     try:
         files, total_count = db.search_files(search_request)
@@ -94,7 +94,7 @@ async def search_files_get(
     max_size: int | None = Query(None, description="Maximum file size in bytes"),
     limit: int = Query(100, ge=1, le=10000, description="Maximum number of results"),
     offset: int = Query(0, ge=0, description="Number of results to skip"),
-):
+) -> SearchResponse:
     """Search for files using GET parameters."""
     search_request = SearchRequest(
         filename_pattern=filename_pattern,
@@ -103,6 +103,8 @@ async def search_files_get(
         has_checksum=has_checksum,
         min_size=min_size,
         max_size=max_size,
+        modified_after=None,
+        modified_before=None,
         limit=limit,
         offset=offset,
     )
@@ -118,7 +120,7 @@ duplicates_router = APIRouter(prefix="/duplicates", tags=["Duplicates"])
 async def find_duplicates_post(
     duplicates_request: DuplicatesRequest,
     db: Annotated[DatabaseService, Depends(get_database_service)],
-):
+) -> DuplicatesResponse:
     """Find duplicate files grouped by checksum with filtering and pagination."""
     try:
         duplicate_groups, total_groups = db.find_duplicates_with_request(
@@ -165,7 +167,7 @@ async def find_duplicates_get(
         100, ge=1, le=1000, description="Maximum number of duplicate groups to return"
     ),
     offset: int = Query(0, ge=0, description="Number of duplicate groups to skip"),
-):
+) -> DuplicatesResponse:
     """Find duplicate files using GET parameters."""
     duplicates_request = DuplicatesRequest(
         min_group_size=min_group_size,
@@ -187,7 +189,7 @@ stats_router = APIRouter(prefix="/stats", tags=["Statistics"])
 @stats_router.get("/", response_model=DatabaseStats)
 async def get_database_stats(
     db: Annotated[DatabaseService, Depends(get_database_service)],
-):
+) -> DatabaseStats:
     """Get comprehensive database statistics."""
     try:
         return db.get_database_stats()
@@ -199,7 +201,7 @@ async def get_database_stats(
 @stats_router.get("/visualization", response_model=VisualizationData)
 async def get_visualization_data(
     db: Annotated[DatabaseService, Depends(get_database_service)],
-):
+) -> VisualizationData:
     """Get data for visualization charts."""
     try:
         return db.get_visualization_data()

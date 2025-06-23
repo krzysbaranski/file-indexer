@@ -4,6 +4,7 @@ Database service layer for querying the file index DuckDB database.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
@@ -68,7 +69,7 @@ class DatabaseService:
 
         # Build the base query
         conditions = []
-        params = []
+        params: list[Any] = []
 
         if search_request.filename_pattern:
             conditions.append("filename LIKE ?")
@@ -108,7 +109,10 @@ class DatabaseService:
 
         # Get total count
         count_query = f"SELECT COUNT(*) FROM files WHERE {where_clause}"
-        total_count = self.conn.execute(count_query, params).fetchone()[0]
+        count_result = self.conn.execute(count_query, params).fetchone()
+        if count_result is None:
+            raise RuntimeError("Failed to get count from database")
+        total_count = count_result[0]
 
         # Get the actual results with pagination
         data_query = f"""
@@ -192,10 +196,11 @@ class DatabaseService:
         offset: int,
     ) -> tuple[list[DuplicateGroup], int]:
         """Find duplicates by first filtering files by name/path patterns, then finding all duplicates of those files."""
+        assert self.conn is not None  # Ensure connection is available
 
         # Step 1: Find files matching the filename/path patterns
         pattern_conditions = []
-        pattern_params = []
+        pattern_params: list[Any] = []
 
         if filename_pattern:
             pattern_conditions.append("filename LIKE ?")
@@ -249,13 +254,16 @@ class DatabaseService:
         )
         """
 
-        total_groups = self.conn.execute(
+        count_result = self.conn.execute(
             count_query, target_checksums + target_checksums + [min_group_size]
-        ).fetchone()[0]
+        ).fetchone()
+        if count_result is None:
+            raise RuntimeError("Failed to get count from database")
+        total_groups = count_result[0]
 
         # Get paginated results
         pagination_clause = ""
-        pagination_params = []
+        pagination_params: list[Any] = []
         if limit is not None:
             pagination_clause = "LIMIT ? OFFSET ?"
             pagination_params = [limit, offset]
@@ -299,10 +307,11 @@ class DatabaseService:
         offset: int,
     ) -> tuple[list[DuplicateGroup], int]:
         """Find duplicates using the original size-based filtering approach."""
+        assert self.conn is not None  # Ensure connection is available
 
         # Build conditions for file size filtering
         size_conditions = []
-        size_params = []
+        size_params: list[Any] = []
 
         if min_file_size is not None:
             size_conditions.append("file_size >= ?")
@@ -329,13 +338,16 @@ class DatabaseService:
         )
         """
 
-        total_groups = self.conn.execute(
+        count_result = self.conn.execute(
             count_query, size_params + [min_group_size]
-        ).fetchone()[0]
+        ).fetchone()
+        if count_result is None:
+            raise RuntimeError("Failed to get count from database")
+        total_groups = count_result[0]
 
         # Then get the duplicate groups with pagination
         pagination_clause = ""
-        pagination_params = []
+        pagination_params: list[Any] = []
         if limit is not None:
             pagination_clause = "LIMIT ? OFFSET ?"
             pagination_params = [limit, offset]
@@ -369,7 +381,7 @@ class DatabaseService:
 
         return self._group_duplicate_results(results), total_groups
 
-    def _group_duplicate_results(self, results: list) -> list[DuplicateGroup]:
+    def _group_duplicate_results(self, results: list[Any]) -> list[DuplicateGroup]:
         """Group database results into DuplicateGroup objects."""
         groups_dict: dict[str, DuplicateGroup] = {}
 
@@ -423,7 +435,7 @@ class DatabaseService:
             raise RuntimeError("Database not connected")
 
         # Basic counts and sizes
-        basic_stats = self.conn.execute("""
+        basic_stats_result = self.conn.execute("""
         SELECT
             COUNT(*) as total_files,
             COALESCE(SUM(file_size), 0) as total_size,
@@ -436,9 +448,12 @@ class DatabaseService:
             MIN(modification_datetime) as oldest_modification
         FROM files
         """).fetchone()
+        
+        if basic_stats_result is None:
+            raise RuntimeError("Failed to get basic stats from database")
 
         # Duplicate statistics
-        duplicate_stats = self.conn.execute("""
+        duplicate_stats_result = self.conn.execute("""
         WITH duplicate_checksums AS (
             SELECT checksum, COUNT(*) as file_count
             FROM files
@@ -451,25 +466,31 @@ class DatabaseService:
             COALESCE(SUM(file_count), 0) as duplicate_files
         FROM duplicate_checksums
         """).fetchone()
+        
+        if duplicate_stats_result is None:
+            raise RuntimeError("Failed to get duplicate stats from database")
 
         # Unique directories
-        unique_dirs = self.conn.execute("""
+        unique_dirs_result = self.conn.execute("""
         SELECT COUNT(DISTINCT path) FROM files
-        """).fetchone()[0]
+        """).fetchone()
+        
+        if unique_dirs_result is None:
+            raise RuntimeError("Failed to get unique directories from database")
 
         return DatabaseStats(
-            total_files=basic_stats[0],
-            total_size=basic_stats[1],
-            files_with_checksums=basic_stats[2],
-            files_without_checksums=basic_stats[3],
-            duplicate_files=duplicate_stats[1] or 0,
-            duplicate_groups=duplicate_stats[0] or 0,
-            average_file_size=basic_stats[4],
-            largest_file_size=basic_stats[5],
-            smallest_file_size=basic_stats[6],
-            most_recent_modification=basic_stats[7],
-            oldest_modification=basic_stats[8],
-            unique_directories=unique_dirs,
+            total_files=basic_stats_result[0],
+            total_size=basic_stats_result[1],
+            files_with_checksums=basic_stats_result[2],
+            files_without_checksums=basic_stats_result[3],
+            duplicate_files=duplicate_stats_result[1] or 0,
+            duplicate_groups=duplicate_stats_result[0] or 0,
+            average_file_size=basic_stats_result[4],
+            largest_file_size=basic_stats_result[5],
+            smallest_file_size=basic_stats_result[6],
+            most_recent_modification=basic_stats_result[7],
+            oldest_modification=basic_stats_result[8],
+            unique_directories=unique_dirs_result[0],
         )
 
     def get_visualization_data(self) -> VisualizationData:
@@ -570,4 +591,7 @@ class DatabaseService:
         if not self.conn:
             raise RuntimeError("Database not connected")
 
-        return self.conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        count_result = self.conn.execute("SELECT COUNT(*) FROM files").fetchone()
+        if count_result is None:
+            raise RuntimeError("Failed to get file count from database")
+        return int(count_result[0])
