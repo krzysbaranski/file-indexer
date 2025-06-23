@@ -800,7 +800,9 @@ class FileIndexer:
         ]
         return [dict(zip(columns, row, strict=True)) for row in results]
 
-    def find_duplicates_streaming(self, batch_size: int = 1000) -> Generator[list[tuple], None, None]:
+    def find_duplicates_streaming(
+        self, batch_size: int = 1000
+    ) -> Generator[list[tuple], None, None]:
         """Find duplicate files and yield results in batches for immediate processing."""
 
         # Optimized query using self-join
