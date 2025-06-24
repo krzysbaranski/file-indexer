@@ -319,13 +319,12 @@ class DatabaseService:
                 raise RuntimeError("Failed to get count from database")
             total_groups = count_result[0]
 
-            # Then get the duplicate groups with pagination
-            pagination_clause = ""
-            pagination_params: list[Any] = []
+            # Then get the duplicate groups with pagination_clause = ""
+            pagination_clause_params: list[Any] = []
             if limit is not None:
                 pagination_clause = "LIMIT ? OFFSET ?"
-                pagination_params = [limit, offset]
-
+                pagination_clause_params = [limit, offset]
+            
             query = f"""
             WITH duplicate_checksums AS (
                 SELECT checksum, file_size, COUNT(*) as file_count
