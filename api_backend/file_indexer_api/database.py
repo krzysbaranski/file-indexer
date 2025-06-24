@@ -228,7 +228,9 @@ class DatabaseService:
             {where_filter}
             """
 
-            checksum_results = self.conn.execute(checksums_query, filter_params).fetchall()
+            checksum_results = self.conn.execute(
+                checksums_query, filter_params
+            ).fetchall()
             target_checksums = [row[0] for row in checksum_results]
 
             if not target_checksums:
