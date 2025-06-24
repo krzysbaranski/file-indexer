@@ -167,25 +167,17 @@ class DatabaseService:
         """
         if not self.conn:
             raise RuntimeError("Database not connected")
-
-        # If filename or path patterns are provided, use the pattern-based approach
-        if filename_pattern or path_pattern:
-            return self._find_duplicates_by_pattern(
-                min_group_size,
-                min_file_size,
-                max_file_size,
-                filename_pattern,
-                path_pattern,
-                limit,
-                offset,
-            )
-
-        # Otherwise, use the original size-based filtering approach
-        return self._find_duplicates_by_size(
-            min_group_size, min_file_size, max_file_size, limit, offset
+        return self._find_duplicates_internal(
+            min_group_size=min_group_size,
+            min_file_size=min_file_size,
+            max_file_size=max_file_size,
+            filename_pattern=filename_pattern,
+            path_pattern=path_pattern,
+            limit=limit,
+            offset=offset,
         )
 
-    def _find_duplicates_by_pattern(
+    def _find_duplicates_internal(
         self,
         min_group_size: int,
         min_file_size: int | None,
@@ -195,189 +187,169 @@ class DatabaseService:
         limit: int | None,
         offset: int,
     ) -> tuple[list[DuplicateGroup], int]:
-        """Find duplicates by first filtering files by name/path patterns, then finding all duplicates of those files."""
+        """Internal method to find duplicates with unified filtering logic."""
         assert self.conn is not None  # Ensure connection is available
 
-        # Step 1: Find files matching the filename/path patterns
-        pattern_conditions = []
-        pattern_params: list[Any] = []
+        # Build filter conditions and parameters
+        filter_conditions = []
+        filter_params: list[Any] = []
 
+        # Add pattern filters
         if filename_pattern:
-            pattern_conditions.append("filename LIKE ?")
-            pattern_params.append(filename_pattern)
+            filter_conditions.append("filename LIKE ?")
+            filter_params.append(filename_pattern)
 
         if path_pattern:
-            pattern_conditions.append("path LIKE ?")
-            pattern_params.append(path_pattern)
+            filter_conditions.append("path LIKE ?")
+            filter_params.append(path_pattern)
 
-        # Add size filters to the pattern matching
+        # Add size filters
         if min_file_size is not None:
-            pattern_conditions.append("file_size >= ?")
-            pattern_params.append(min_file_size)
+            filter_conditions.append("file_size >= ?")
+            filter_params.append(min_file_size)
 
         if max_file_size is not None:
-            pattern_conditions.append("file_size <= ?")
-            pattern_params.append(max_file_size)
+            filter_conditions.append("file_size <= ?")
+            filter_params.append(max_file_size)
 
-        pattern_filter = (
-            " AND ".join(pattern_conditions) if pattern_conditions else "1=1"
-        )
+        # Build WHERE clause
+        where_filter = ""
+        if filter_conditions:
+            where_filter = f"AND {' AND '.join(filter_conditions)}"
 
-        # Step 2: Get checksums of files matching the pattern
-        checksums_query = f"""
-        SELECT DISTINCT checksum
-        FROM files
-        WHERE checksum IS NOT NULL
-        AND {pattern_filter}
-        """
+        # If we have pattern filtering, we need a two-step approach:
+        # 1. Find files matching patterns, 2. Find ALL duplicates of those files
+        if filename_pattern or path_pattern:
+            # Step 1: Get checksums of files matching the patterns
+            checksums_query = f"""
+            SELECT DISTINCT checksum
+            FROM files
+            WHERE checksum IS NOT NULL
+            {where_filter}
+            """
 
-        checksum_results = self.conn.execute(checksums_query, pattern_params).fetchall()
-        target_checksums = [row[0] for row in checksum_results]
+            checksum_results = self.conn.execute(checksums_query, filter_params).fetchall()
+            target_checksums = [row[0] for row in checksum_results]
 
-        if not target_checksums:
-            return [], 0
+            if not target_checksums:
+                return [], 0
 
-        # Step 3: Find ALL files with those checksums (across entire database)
-        checksum_placeholders = ",".join("?" * len(target_checksums))
+            # Step 2: Find ALL files with those checksums (across entire database)
+            checksum_placeholders = ",".join("?" * len(target_checksums))
 
-        # Count total groups
-        count_query = f"""
-        SELECT COUNT(DISTINCT checksum)
-        FROM files
-        WHERE checksum IN ({checksum_placeholders})
-        AND checksum IN (
-            SELECT checksum
+            # Count total groups
+            count_query = f"""
+            SELECT COUNT(DISTINCT checksum)
             FROM files
             WHERE checksum IN ({checksum_placeholders})
-            GROUP BY checksum
-            HAVING COUNT(*) >= ?
-        )
-        """
+            AND checksum IN (
+                SELECT checksum
+                FROM files
+                WHERE checksum IN ({checksum_placeholders})
+                GROUP BY checksum
+                HAVING COUNT(*) >= ?
+            )
+            """
 
-        count_result = self.conn.execute(
-            count_query, target_checksums + target_checksums + [min_group_size]
-        ).fetchone()
-        if count_result is None:
-            raise RuntimeError("Failed to get count from database")
-        total_groups = count_result[0]
+            count_result = self.conn.execute(
+                count_query, target_checksums + target_checksums + [min_group_size]
+            ).fetchone()
+            if count_result is None:
+                raise RuntimeError("Failed to get count from database")
+            total_groups = count_result[0]
 
-        # Get paginated results
-        pagination_clause = ""
-        pagination_params: list[Any] = []
-        if limit is not None:
-            pagination_clause = "LIMIT ? OFFSET ?"
-            pagination_params = [limit, offset]
+            # Get paginated results
+            pagination_clause = ""
+            pagination_params: list[Any] = []
+            if limit is not None:
+                pagination_clause = "LIMIT ? OFFSET ?"
+                pagination_params = [limit, offset]
 
-        # Step 4: Get all duplicate groups with those checksums
-        query = f"""
-        WITH target_duplicate_checksums AS (
-            SELECT checksum, file_size, COUNT(*) as file_count
+            # Get all duplicate groups with those checksums
+            query = f"""
+            WITH target_duplicate_checksums AS (
+                SELECT checksum, file_size, COUNT(*) as file_count
+                FROM files
+                WHERE checksum IN ({checksum_placeholders})
+                GROUP BY checksum, file_size
+                HAVING COUNT(*) >= ?
+                ORDER BY COUNT(*) DESC, file_size DESC
+                {pagination_clause}
+            )
+            SELECT
+                f.checksum,
+                f.file_size,
+                tdc.file_count,
+                f.path,
+                f.filename,
+                f.modification_datetime,
+                f.indexed_at
+            FROM files f
+            JOIN target_duplicate_checksums tdc ON f.checksum = tdc.checksum AND f.file_size = tdc.file_size
+            ORDER BY tdc.file_count DESC, f.checksum, f.path, f.filename
+            """
+
+            results = self.conn.execute(
+                query, target_checksums + [min_group_size] + pagination_params
+            ).fetchall()
+
+        else:
+            # Simple size-based filtering approach
+            # First, get the total count of duplicate groups
+            count_query = f"""
+            SELECT COUNT(DISTINCT checksum)
             FROM files
-            WHERE checksum IN ({checksum_placeholders})
-            GROUP BY checksum, file_size
-            HAVING COUNT(*) >= ?
-            ORDER BY COUNT(*) DESC, file_size DESC
-            {pagination_clause}
-        )
-        SELECT
-            f.checksum,
-            f.file_size,
-            tdc.file_count,
-            f.path,
-            f.filename,
-            f.modification_datetime,
-            f.indexed_at
-        FROM files f
-        JOIN target_duplicate_checksums tdc ON f.checksum = tdc.checksum AND f.file_size = tdc.file_size
-        ORDER BY tdc.file_count DESC, f.checksum, f.path, f.filename
-        """
+            WHERE checksum IS NOT NULL
+            {where_filter}
+            AND checksum IN (
+                SELECT checksum
+                FROM files
+                WHERE checksum IS NOT NULL {where_filter}
+                GROUP BY checksum
+                HAVING COUNT(*) >= ?
+            )
+            """
 
-        results = self.conn.execute(
-            query, target_checksums + [min_group_size] + pagination_params
-        ).fetchall()
+            count_result = self.conn.execute(
+                count_query, filter_params + filter_params + [min_group_size]
+            ).fetchone()
+            if count_result is None:
+                raise RuntimeError("Failed to get count from database")
+            total_groups = count_result[0]
 
-        return self._group_duplicate_results(results), total_groups
+            # Then get the duplicate groups with pagination
+            pagination_clause = ""
+            pagination_params: list[Any] = []
+            if limit is not None:
+                pagination_clause = "LIMIT ? OFFSET ?"
+                pagination_params = [limit, offset]
 
-    def _find_duplicates_by_size(
-        self,
-        min_group_size: int,
-        min_file_size: int | None,
-        max_file_size: int | None,
-        limit: int | None,
-        offset: int,
-    ) -> tuple[list[DuplicateGroup], int]:
-        """Find duplicates using the original size-based filtering approach."""
-        assert self.conn is not None  # Ensure connection is available
+            query = f"""
+            WITH duplicate_checksums AS (
+                SELECT checksum, file_size, COUNT(*) as file_count
+                FROM files
+                WHERE checksum IS NOT NULL {where_filter}
+                GROUP BY checksum, file_size
+                HAVING COUNT(*) >= ?
+                ORDER BY COUNT(*) DESC, file_size DESC
+                {pagination_clause}
+            )
+            SELECT
+                f.checksum,
+                f.file_size,
+                dc.file_count,
+                f.path,
+                f.filename,
+                f.modification_datetime,
+                f.indexed_at
+            FROM files f
+            JOIN duplicate_checksums dc ON f.checksum = dc.checksum AND f.file_size = dc.file_size
+            ORDER BY dc.file_count DESC, f.checksum, f.path, f.filename
+            """
 
-        # Build conditions for file size filtering
-        size_conditions = []
-        size_params: list[Any] = []
-
-        if min_file_size is not None:
-            size_conditions.append("file_size >= ?")
-            size_params.append(min_file_size)
-
-        if max_file_size is not None:
-            size_conditions.append("file_size <= ?")
-            size_params.append(max_file_size)
-
-        size_filter = f"AND {' AND '.join(size_conditions)}" if size_conditions else ""
-
-        # First, get the total count of duplicate groups
-        count_query = f"""
-        SELECT COUNT(DISTINCT checksum)
-        FROM files
-        WHERE checksum IS NOT NULL
-        {size_filter}
-        AND checksum IN (
-            SELECT checksum
-            FROM files
-            WHERE checksum IS NOT NULL {size_filter}
-            GROUP BY checksum
-            HAVING COUNT(*) >= ?
-        )
-        """
-
-        count_result = self.conn.execute(
-            count_query, size_params + [min_group_size]
-        ).fetchone()
-        if count_result is None:
-            raise RuntimeError("Failed to get count from database")
-        total_groups = count_result[0]
-
-        # Then get the duplicate groups with pagination
-        pagination_clause = ""
-        pagination_params: list[Any] = []
-        if limit is not None:
-            pagination_clause = "LIMIT ? OFFSET ?"
-            pagination_params = [limit, offset]
-
-        query = f"""
-        WITH duplicate_checksums AS (
-            SELECT checksum, file_size, COUNT(*) as file_count
-            FROM files
-            WHERE checksum IS NOT NULL {size_filter}
-            GROUP BY checksum, file_size
-            HAVING COUNT(*) >= ?
-            ORDER BY COUNT(*) DESC, file_size DESC
-            {pagination_clause}
-        )
-        SELECT
-            f.checksum,
-            f.file_size,
-            dc.file_count,
-            f.path,
-            f.filename,
-            f.modification_datetime,
-            f.indexed_at
-        FROM files f
-        JOIN duplicate_checksums dc ON f.checksum = dc.checksum AND f.file_size = dc.file_size
-        ORDER BY dc.file_count DESC, f.checksum, f.path, f.filename
-        """
-
-        results = self.conn.execute(
-            query, size_params + [min_group_size] + pagination_params
-        ).fetchall()
+            results = self.conn.execute(
+                query, filter_params + [min_group_size] + pagination_params
+            ).fetchall()
 
         return self._group_duplicate_results(results), total_groups
 
