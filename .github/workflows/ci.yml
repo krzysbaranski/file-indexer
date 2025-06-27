@@ -133,7 +133,7 @@ jobs:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
         verbose: true
-        file: ./api_backend/coverage.xml
+        files: ./api_backend/coverage.xml
         flags: api-backend
         name: codecov-api-backend
         directory: ./api_backend
