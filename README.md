@@ -19,7 +19,8 @@ A high-performance file indexing tool using DuckDB with parallel processing and 
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+poetry env 3.12
+poetry install
 ```
 
 ## Usage
