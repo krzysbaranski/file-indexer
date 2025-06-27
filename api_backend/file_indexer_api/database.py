@@ -321,10 +321,10 @@ class DatabaseService:
 
             # Then get the duplicate groups with pagination
             pagination_clause = ""
-            pagination_params: list[Any] = []
+            pagination_params1: list[Any] = []
             if limit is not None:
                 pagination_clause = "LIMIT ? OFFSET ?"
-                pagination_params = [limit, offset]
+                pagination_params1 = [limit, offset]
 
             query = f"""
             WITH duplicate_checksums AS (
@@ -350,7 +350,7 @@ class DatabaseService:
             """
 
             results = self.conn.execute(
-                query, filter_params + [min_group_size] + pagination_params
+                query, filter_params + [min_group_size] + pagination_params1
             ).fetchall()
 
         return self._group_duplicate_results(results), total_groups
