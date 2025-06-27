@@ -33,9 +33,6 @@ cd api_backend
 
 # Using Poetry (recommended)
 poetry install
-
-# Or using pip
-pip install -r requirements.txt
 ```
 
 ### 3. Start the API Server
