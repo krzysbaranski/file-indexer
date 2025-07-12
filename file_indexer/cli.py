@@ -122,6 +122,11 @@ def main() -> None:
         help="Remove database records for empty directories",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be cleaned up without making changes (for cleanup operations)",
+    )
+    parser.add_argument(
         "--page-size",
         type=int,
         default=10000,
@@ -222,7 +227,7 @@ def main() -> None:
                 print(f"  Deleted files cleaned: {stats['deleted_files']:,}")
         elif args.cleanup:
             cleanup_result = indexer.cleanup_deleted_files(
-                batch_size=args.batch_size, page_size=args.page_size
+                batch_size=args.batch_size, page_size=args.page_size, dry_run=args.dry_run
             )
             print("\nCleanup Summary:")
             print(f"  Files checked: {cleanup_result['total_checked']:,}")
@@ -231,7 +236,7 @@ def main() -> None:
             if cleanup_result["permission_errors"] > 0:
                 print(f"  Permission errors: {cleanup_result['permission_errors']:,}")
         elif args.cleanup_empty_dirs:
-            cleanup_result = indexer.cleanup_empty_directories(page_size=args.page_size)
+            cleanup_result = indexer.cleanup_empty_directories(page_size=args.page_size, dry_run=args.dry_run)
             print("\nEmpty Directory Cleanup Summary:")
             print(f"  Directories checked: {cleanup_result['total_checked']:,}")
             print(
