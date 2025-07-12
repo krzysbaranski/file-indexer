@@ -1,0 +1,94 @@
+name: Go CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'file_indexer_go/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'file_indexer_go/**'
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.24", "1.25"]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('file_indexer_go/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+    
+    - name: Verify dependencies
+      working-directory: ./file_indexer_go
+      run: go mod verify
+    
+    - name: Run tests
+      working-directory: ./file_indexer_go
+      run: go test -v ./...
+    
+    - name: Run tests with coverage
+      working-directory: ./file_indexer_go
+      run: go test -v -coverprofile=coverage.out ./...
+    
+    - name: Upload coverage to Codecov
+      if: matrix.go-version == '1.24'
+      uses: codecov/codecov-action@v5
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+        verbose: true
+        files: ./file_indexer_go/coverage.out
+        flags: go-app
+        name: codecov-go-app
+        directory: ./file_indexer_go
+    
+    - name: Build application
+      working-directory: ./file_indexer_go
+      run: go build -v -o file-indexer main.go
+    
+    - name: Build for multiple platforms
+      working-directory: ./file_indexer_go
+      run: |
+        GOOS=linux GOARCH=amd64 go build -v -o file-indexer-linux-amd64 main.go
+        GOOS=darwin GOARCH=amd64 go build -v -o file-indexer-darwin-amd64 main.go
+        GOOS=darwin GOARCH=arm64 go build -v -o file-indexer-darwin-arm64 main.go
+        GOOS=windows GOARCH=amd64 go build -v -o file-indexer-windows-amd64.exe main.go
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: file-indexer-builds-${{ matrix.go-version }}
+        path: |
+          file_indexer_go/file-indexer
+          file_indexer_go/file-indexer-linux-amd64
+          file_indexer_go/file-indexer-darwin-amd64
+          file_indexer_go/file-indexer-darwin-arm64
+          file_indexer_go/file-indexer-windows-amd64.exe
+        retention-days: 30
+    
+    - name: Run example script (integration test)
+      working-directory: ./file_indexer_go
+      run: |
+        chmod +x example.sh
+        ./example.sh
