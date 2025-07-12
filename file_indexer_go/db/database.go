@@ -9,7 +9,7 @@ import (
 
 	"file_indexer_go/models"
 
-	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 // Database handles all database operations
