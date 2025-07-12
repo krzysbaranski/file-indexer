@@ -14,13 +14,5 @@ file_indexer_go/file_indexer_go.windows
 *.db
 *.sqlite
 *.sqlite3
-
-# Index files (generated)
 file_indexer_go/file_index.json
 file_indexer_go/file_index.db
-
-# Test files and directories (keep small test files for examples)
-file_indexer_go/tmp/
-file_indexer_go/temp/
-
-# Go build artifacts (but keep go.sum as it's needed for dependencies)

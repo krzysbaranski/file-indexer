@@ -190,6 +190,9 @@ class DatabaseService:
         """Internal method to find duplicates with unified filtering logic."""
         assert self.conn is not None  # Ensure connection is available
 
+        pagination_clause = "LIMIT ? OFFSET ?" if limit is not None else ""
+        pagination_params: list[Any] = [limit, offset] if limit is not None else []
+
         # Build filter conditions and parameters
         filter_conditions = []
         filter_params: list[Any] = []
@@ -260,13 +263,6 @@ class DatabaseService:
                 raise RuntimeError("Failed to get count from database")
             total_groups = count_result[0]
 
-            # Get paginated results
-            pagination_clause = ""
-            pagination_params: list[Any] = []
-            if limit is not None:
-                pagination_clause = "LIMIT ? OFFSET ?"
-                pagination_params = [limit, offset]
-
             # Get all duplicate groups with those checksums
             query = f"""
             WITH target_duplicate_checksums AS (
@@ -319,13 +315,6 @@ class DatabaseService:
                 raise RuntimeError("Failed to get count from database")
             total_groups = count_result[0]
 
-            # Then get the duplicate groups with pagination
-            pagination_clause = ""
-            pagination_params1: list[Any] = []
-            if limit is not None:
-                pagination_clause = "LIMIT ? OFFSET ?"
-                pagination_params1 = [limit, offset]
-
             query = f"""
             WITH duplicate_checksums AS (
                 SELECT checksum, file_size, COUNT(*) as file_count
@@ -350,7 +339,7 @@ class DatabaseService:
             """
 
             results = self.conn.execute(
-                query, filter_params + [min_group_size] + pagination_params1
+                query, filter_params + [min_group_size] + pagination_params
             ).fetchall()
 
         return self._group_duplicate_results(results), total_groups
