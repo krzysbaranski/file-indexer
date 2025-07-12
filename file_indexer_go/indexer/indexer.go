@@ -1,9 +1,11 @@
 package indexer
 
 import (
-	"bufio"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -90,36 +92,50 @@ func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFile
 			return nil
 		}
 
+		// Skip directories - we only index files
+		if d.IsDir() {
+			return nil
+		}
+
 		info, err := d.Info()
 		if err != nil {
 			log.Printf("Error getting file info for %s: %v", path, err)
 			return nil
 		}
 
+		// Skip special files (symlinks, etc.)
+		if !info.Mode().IsRegular() {
+			log.Printf("Skipping special file: %s", path)
+			return nil
+		}
+
 		// Skip files larger than maxFileSize
-		if !d.IsDir() && maxFileSize > 0 && info.Size() > maxFileSize {
+		if maxFileSize > 0 && info.Size() > maxFileSize {
 			log.Printf("Skipping large file: %s (size: %d bytes)", path, info.Size())
 			return nil
 		}
 
-		var contentLines []string
-		if includeContent && !d.IsDir() && info.Size() <= maxFileSize {
-			content, err := i.readFileContent(path)
-			if err != nil {
-				log.Printf("Error reading content of %s: %v", path, err)
-			} else {
-				contentLines = content
-			}
+		// Get absolute path
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			log.Printf("Error getting absolute path for %s: %v", path, err)
+			absPath = path // fallback to original path
+		}
+
+		// Calculate checksum
+		checksum, err := i.calculateChecksum(path)
+		if err != nil {
+			log.Printf("Error calculating checksum for %s: %v", path, err)
+			checksum = "" // empty checksum on error
 		}
 
 		fileInfo := models.FileInfo{
-			Path:         path,
-			Name:         filepath.Base(path),
-			Size:         info.Size(),
-			ModTime:      info.ModTime(),
-			IsDir:        d.IsDir(),
-			Extension:    strings.ToLower(filepath.Ext(path)),
-			ContentLines: contentLines,
+			Path:                 absPath,
+			Filename:             filepath.Base(path),
+			Checksum:             checksum,
+			ModificationDateTime: info.ModTime(),
+			FileSize:             info.Size(),
+			IndexedAt:            time.Now(),
 		}
 
 		// Insert into database
@@ -128,11 +144,7 @@ func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFile
 			return nil
 		}
 
-		if d.IsDir() {
-			log.Printf("Indexed directory: %s", path)
-		} else {
-			log.Printf("Indexed file: %s (size: %d bytes)", path, info.Size())
-		}
+		log.Printf("Indexed file: %s (size: %d bytes)", path, info.Size())
 
 		return nil
 	})
@@ -173,45 +185,55 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, includeContent bool, maxFi
 			return nil
 		}
 
+		// Skip directories - we only index files
+		if d.IsDir() {
+			return nil
+		}
+
 		info, err := d.Info()
 		if err != nil {
 			log.Printf("Error getting file info for %s: %v", path, err)
 			return nil
 		}
 
+		// Skip special files (symlinks, etc.)
+		if !info.Mode().IsRegular() {
+			log.Printf("Skipping special file: %s", path)
+			return nil
+		}
+
 		// Skip files larger than maxFileSize
-		if !d.IsDir() && maxFileSize > 0 && info.Size() > maxFileSize {
+		if maxFileSize > 0 && info.Size() > maxFileSize {
 			log.Printf("Skipping large file: %s (size: %d bytes)", path, info.Size())
 			return nil
 		}
 
-		var contentLines []string
-		if includeContent && !d.IsDir() && info.Size() <= maxFileSize {
-			content, err := i.readFileContent(path)
-			if err != nil {
-				log.Printf("Error reading content of %s: %v", path, err)
-			} else {
-				contentLines = content
-			}
+		// Get absolute path
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			log.Printf("Error getting absolute path for %s: %v", path, err)
+			absPath = path // fallback to original path
+		}
+
+		// Calculate checksum
+		checksum, err := i.calculateChecksum(path)
+		if err != nil {
+			log.Printf("Error calculating checksum for %s: %v", path, err)
+			checksum = "" // empty checksum on error
 		}
 
 		fileInfo := models.FileInfo{
-			Path:         path,
-			Name:         filepath.Base(path),
-			Size:         info.Size(),
-			ModTime:      info.ModTime(),
-			IsDir:        d.IsDir(),
-			Extension:    strings.ToLower(filepath.Ext(path)),
-			ContentLines: contentLines,
+			Path:                 absPath,
+			Filename:             filepath.Base(path),
+			Checksum:             checksum,
+			ModificationDateTime: info.ModTime(),
+			FileSize:             info.Size(),
+			IndexedAt:            time.Now(),
 		}
 
-		i.index.Files[path] = fileInfo
+		i.index.Files[absPath] = fileInfo
 
-		if d.IsDir() {
-			log.Printf("Indexed directory: %s", path)
-		} else {
-			log.Printf("Indexed file: %s (size: %d bytes)", path, info.Size())
-		}
+		log.Printf("Indexed file: %s (size: %d bytes)", path, info.Size())
 
 		return nil
 	})
@@ -224,25 +246,20 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, includeContent bool, maxFi
 	return nil
 }
 
-// readFileContent reads the content of a file and returns it as lines
-func (i *Indexer) readFileContent(path string) ([]string, error) {
+// calculateChecksum calculates MD5 checksum of a file
+func (i *Indexer) calculateChecksum(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer file.Close()
 
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	hash := md5.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-
-	return lines, nil
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // SaveIndex saves the index to storage
@@ -324,17 +341,9 @@ func (i *Indexer) searchJSON(query string) []models.FileInfo {
 	query = strings.ToLower(query)
 
 	for _, file := range i.index.Files {
-		if strings.Contains(strings.ToLower(file.Name), query) ||
+		if strings.Contains(strings.ToLower(file.Filename), query) ||
 			strings.Contains(strings.ToLower(file.Path), query) {
 			results = append(results, file)
-		} else {
-			// Search in content lines
-			for _, line := range file.ContentLines {
-				if strings.Contains(strings.ToLower(line), query) {
-					results = append(results, file)
-					break
-				}
-			}
 		}
 	}
 
@@ -399,10 +408,15 @@ func (i *Indexer) getStatsJSON() map[string]interface{} {
 	fileTypes := make(map[string]int)
 
 	for _, file := range i.index.Files {
-		if !file.IsDir {
-			totalSize += file.Size
+		totalSize += file.FileSize
+		
+		// Extract extension from filename
+		ext := strings.ToLower(filepath.Ext(file.Filename))
+		if ext == "" {
+			fileTypes["no_extension"]++
+		} else {
+			fileTypes[ext]++
 		}
-		fileTypes[file.Extension]++
 	}
 
 	stats["total_size"] = totalSize
