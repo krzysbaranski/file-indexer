@@ -8,7 +8,7 @@ import sqlite3
 
 def create_test_database():
     """Create a test database with files that simulate the issue."""
-    conn = sqlite3.connect(':memory:')
+    conn = sqlite3.connect(":memory:")
 
     # Create the files table
     conn.execute("""
@@ -32,26 +32,27 @@ def create_test_database():
         ("/path1", "file1.txt", 1000, "abc123", "2024-01-01 10:00:00"),
         ("/path2", "file2.txt", 1000, "def456", "2024-01-01 10:00:00"),
         ("/path3", "file3.txt", 1000, None, "2024-01-01 10:00:00"),
-
         # Size 2000 - should be included because all files lack checksums
         ("/path4", "file4.txt", 2000, None, "2024-01-01 10:00:00"),
         ("/path5", "file5.txt", 2000, None, "2024-01-01 10:00:00"),
-
         # Size 3000 - should be ignored because only one file
         ("/path6", "file6.txt", 3000, None, "2024-01-01 10:00:00"),
-
         # Size 4000 - should be ignored because all files have checksums
         ("/path7", "file7.txt", 4000, "ghi789", "2024-01-01 10:00:00"),
         ("/path8", "file8.txt", 4000, "jkl012", "2024-01-01 10:00:00"),
     ]
 
-    conn.executemany("""
+    conn.executemany(
+        """
     INSERT INTO files (path, filename, file_size, checksum, modification_datetime)
     VALUES (?, ?, ?, ?, ?)
-    """, test_data)
+    """,
+        test_data,
+    )
 
     conn.commit()
     return conn
+
 
 def test_old_query():
     """Test the old query logic."""
@@ -75,6 +76,7 @@ def test_old_query():
 
     conn.close()
 
+
 def test_new_query():
     """Test the new query logic."""
     print("\n=== Testing NEW query logic ===")
@@ -97,11 +99,14 @@ def test_new_query():
     # Show details for each size
     for size, _count in results:
         print(f"\nDetails for size {size}:")
-        files = conn.execute("""
+        files = conn.execute(
+            """
         SELECT path, filename, checksum IS NULL as needs_checksum
         FROM files WHERE file_size = ?
         ORDER BY path, filename
-        """, [size]).fetchall()
+        """,
+            [size],
+        ).fetchall()
 
         for path, filename, needs_checksum in files:
             status = "NEEDS CHECKSUM" if needs_checksum else "has checksum"
@@ -109,20 +114,24 @@ def test_new_query():
 
     conn.close()
 
+
 def test_with_empty_files():
     """Test the new query logic with empty file filtering."""
     print("\n=== Testing NEW query logic with empty file filtering ===")
     conn = create_test_database()
 
     # Add some empty files
-    conn.executemany("""
+    conn.executemany(
+        """
     INSERT INTO files (path, filename, file_size, checksum, modification_datetime)
     VALUES (?, ?, ?, ?, ?)
-    """, [
-        ("/path9", "empty1.txt", 0, None, "2024-01-01 10:00:00"),
-        ("/path10", "empty2.txt", 0, None, "2024-01-01 10:00:00"),
-        ("/path11", "empty3.txt", 0, "xyz999", "2024-01-01 10:00:00")
-    ])
+    """,
+        [
+            ("/path9", "empty1.txt", 0, None, "2024-01-01 10:00:00"),
+            ("/path10", "empty2.txt", 0, None, "2024-01-01 10:00:00"),
+            ("/path11", "empty3.txt", 0, "xyz999", "2024-01-01 10:00:00"),
+        ],
+    )
     conn.commit()
 
     # New query with empty file filtering
@@ -141,6 +150,7 @@ def test_with_empty_files():
         print(f"  Size {size}: {count} files")
 
     conn.close()
+
 
 if __name__ == "__main__":
     test_old_query()
