@@ -3,7 +3,16 @@
 .coverage.*
 frontend/node_modules
 
+# Go binaries and generated files
+file_indexer_go/file_indexer_go
+file_indexer_go/file_indexer_go.exe
+file_indexer_go/file_indexer_go.darwin
+file_indexer_go/file_indexer_go.linux
+file_indexer_go/file_indexer_go.windows
+
 # Database files
 *.db
 *.sqlite
 *.sqlite3
+file_indexer_go/file_index.json
+file_indexer_go/file_index.db
