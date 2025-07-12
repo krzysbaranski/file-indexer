@@ -31,20 +31,20 @@ def create_test_database():
     # File size 3000 has 1 file: without checksum (should be ignored)
     test_data = [
         # Size 1000 - should be included because it has files without checksums
-        ('/path1', 'file1.txt', 1000, 'abc123', '2024-01-01 10:00:00'),
-        ('/path2', 'file2.txt', 1000, 'def456', '2024-01-01 10:00:00'),
-        ('/path3', 'file3.txt', 1000, None, '2024-01-01 10:00:00'),
+        ("/path1", "file1.txt", 1000, "abc123", "2024-01-01 10:00:00"),
+        ("/path2", "file2.txt", 1000, "def456", "2024-01-01 10:00:00"),
+        ("/path3", "file3.txt", 1000, None, "2024-01-01 10:00:00"),
         
         # Size 2000 - should be included because all files lack checksums
-        ('/path4', 'file4.txt', 2000, None, '2024-01-01 10:00:00'),
-        ('/path5', 'file5.txt', 2000, None, '2024-01-01 10:00:00'),
+        ("/path4", "file4.txt", 2000, None, "2024-01-01 10:00:00"),
+        ("/path5", "file5.txt", 2000, None, "2024-01-01 10:00:00"),
         
         # Size 3000 - should be ignored because only one file
-        ('/path6', 'file6.txt', 3000, None, '2024-01-01 10:00:00'),
+        ("/path6", "file6.txt", 3000, None, "2024-01-01 10:00:00"),
         
         # Size 4000 - should be ignored because all files have checksums
-        ('/path7', 'file7.txt', 4000, 'ghi789', '2024-01-01 10:00:00'),
-        ('/path8', 'file8.txt', 4000, 'jkl012', '2024-01-01 10:00:00'),
+        ("/path7", "file7.txt", 4000, "ghi789", "2024-01-01 10:00:00"),
+        ("/path8", "file8.txt", 4000, "jkl012", "2024-01-01 10:00:00"),
     ]
     
     conn.executemany("""
@@ -121,9 +121,9 @@ def test_with_empty_files():
     INSERT INTO files (path, filename, file_size, checksum, modification_datetime)
     VALUES (?, ?, ?, ?, ?)
     """, [
-        ('/path9', 'empty1.txt', 0, None, '2024-01-01 10:00:00'),
-        ('/path10', 'empty2.txt', 0, None, '2024-01-01 10:00:00'),
-        ('/path11', 'empty3.txt', 0, 'xyz999', '2024-01-01 10:00:00')
+        ("/path9", "empty1.txt", 0, None, "2024-01-01 10:00:00"),
+        ("/path10", "empty2.txt", 0, None, "2024-01-01 10:00:00"),
+        ("/path11", "empty3.txt", 0, "xyz999", "2024-01-01 10:00:00")
     ])
     conn.commit()
     
