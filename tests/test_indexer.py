@@ -480,8 +480,6 @@ class TestFileIndexer:
         finally:
             calc_indexer.close()
 
-
-
     def test_batch_processing(self):
         """Test that batch processing works correctly."""
         # Reset counters

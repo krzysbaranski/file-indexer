@@ -109,8 +109,6 @@ class FileIndexer:
         CREATE INDEX IF NOT EXISTS idx_file_size ON files(file_size);
         """)
 
-
-
     def _should_process_file(
         self, file_path: str | Path, check_empty_files: bool = False
     ) -> bool:
