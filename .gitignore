@@ -2,3 +2,8 @@
 .coverage
 .coverage.*
 frontend/node_modules
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
