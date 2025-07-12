@@ -1642,6 +1642,7 @@ class FileIndexer:
         """
         Calculate checksums for a specific list of files and update the database.
         Filters out symlinks and special files during processing.
+        Uses safe database operations with corruption detection.
 
         Args:
             file_paths: List of file paths to calculate checksums for
@@ -1649,58 +1650,8 @@ class FileIndexer:
         Returns:
             Number of files successfully updated with checksums
         """
-        if not file_paths:
-            return 0
-
-        # Filter out symlinks, special files, and empty files before checksum calculation
-        valid_file_paths = []
-        for file_path in file_paths:
-            # Use shared helper function with empty file checking
-            if self._should_process_file(file_path, check_empty_files=True):
-                valid_file_paths.append(file_path)
-
-        if not valid_file_paths:
-            return 0
-
-        # Calculate checksums in parallel for valid files only
-        checksums = self._calculate_checksums_parallel(valid_file_paths)
-
-        if not checksums:
-            return 0
-
-        # Prepare database updates
-        update_data = []
-        for file_path in valid_file_paths:
-            if file_path in checksums:
-                path_obj = Path(file_path)
-                directory = str(path_obj.parent)
-                filename = path_obj.name
-                checksum = checksums[file_path]
-
-                # Update record with checksum (keep existing modification_datetime and file_size)
-                update_data.append((checksum, directory, filename))
-
-        if not update_data:
-            return 0
-
-        # Perform bulk database update
-        self.conn.execute("BEGIN TRANSACTION")
-
-        try:
-            update_sql = """
-            UPDATE files
-            SET checksum = ?, indexed_at = CURRENT_TIMESTAMP
-            WHERE path = ? AND filename = ?
-            """
-            self.conn.executemany(update_sql, update_data)
-            self.conn.execute("COMMIT")
-
-            return len(update_data)
-
-        except Exception as e:
-            self.conn.execute("ROLLBACK")
-            print(f"Database update failed: {e}")
-            return 0
+        # Use the safe version that includes corruption detection
+        return self._calculate_checksums_for_files_safe(file_paths)
 
     def two_phase_indexing(
         self, directory_path: str, recursive: bool = True, batch_size: int = 1000
@@ -1872,3 +1823,212 @@ class FileIndexer:
                 continue
 
         return False
+
+    def check_database_integrity(self) -> bool:
+        """
+        Check database integrity and return True if healthy.
+        
+        Returns:
+            True if database integrity check passes, False otherwise
+        """
+        try:
+            # Run DuckDB integrity check
+            result = self.conn.execute("PRAGMA integrity_check").fetchone()
+            return result[0] == "ok"
+        except Exception as e:
+            print(f"Database integrity check failed: {e}")
+            return False
+
+    def _safe_database_operation(self, operation_func, *args, **kwargs):
+        """
+        Execute database operations with corruption detection and recovery.
+        
+        Args:
+            operation_func: Function to execute
+            *args, **kwargs: Arguments to pass to the function
+            
+        Returns:
+            Result of the operation
+            
+        Raises:
+            DatabaseCorruptionError: If database corruption is detected and recovery fails
+        """
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return operation_func(*args, **kwargs)
+            except duckdb.TransactionException as e:
+                error_str = str(e)
+                if "Invalid node type" in error_str or "node without metadata" in error_str:
+                    print(f"Database corruption detected (attempt {attempt + 1}/{max_retries})")
+                    print(f"Error: {error_str}")
+                    if attempt < max_retries - 1:
+                        try:
+                            self._attempt_database_recovery()
+                            continue
+                        except Exception as recovery_error:
+                            print(f"Recovery attempt failed: {recovery_error}")
+                    else:
+                        raise DatabaseCorruptionError("Database corruption detected and recovery failed")
+                raise
+            except Exception as e:
+                # Re-raise non-corruption errors
+                raise
+
+    def _attempt_database_recovery(self):
+        """
+        Attempt to recover from database corruption.
+        
+        Raises:
+            DatabaseCorruptionError: If recovery fails
+        """
+        try:
+            print("Attempting database recovery...")
+            
+            # Try to create a backup of current state
+            backup_path = f"{self.db_path}.backup_{int(time.time())}"
+            try:
+                self.conn.execute(f"EXPORT DATABASE '{backup_path}'")
+                print(f"Database backup created: {backup_path}")
+            except Exception as e:
+                print(f"Could not create backup: {e}")
+            
+            # Close current connection
+            self.conn.close()
+            
+            # Reconnect to database
+            self.conn = duckdb.connect(self.db_path)
+            
+            # Run integrity check
+            if not self.check_database_integrity():
+                print("Database integrity check failed after recovery attempt")
+                raise DatabaseCorruptionError("Database integrity check failed")
+            
+            print("Database recovery completed successfully")
+            
+        except Exception as e:
+            print(f"Database recovery failed: {e}")
+            raise DatabaseCorruptionError(f"Unable to recover from database corruption: {e}")
+
+    def _calculate_checksums_for_files_safe(self, file_paths: list[str]) -> int:
+        """
+        Safe version of _calculate_checksums_for_files with corruption detection.
+        
+        Args:
+            file_paths: List of file paths to calculate checksums for
+            
+        Returns:
+            Number of files successfully updated with checksums
+        """
+        if not file_paths:
+            return 0
+
+        # Filter out symlinks, special files, and empty files before checksum calculation
+        valid_file_paths = []
+        for file_path in file_paths:
+            # Use shared helper function with empty file checking
+            if self._should_process_file(file_path, check_empty_files=True):
+                valid_file_paths.append(file_path)
+
+        if not valid_file_paths:
+            return 0
+
+        # Calculate checksums in parallel for valid files only
+        checksums = self._calculate_checksums_parallel(valid_file_paths)
+
+        if not checksums:
+            return 0
+
+        # Prepare database updates
+        update_data = []
+        for file_path in valid_file_paths:
+            if file_path in checksums:
+                path_obj = Path(file_path)
+                directory = str(path_obj.parent)
+                filename = path_obj.name
+                checksum = checksums[file_path]
+
+                # Update record with checksum (keep existing modification_datetime and file_size)
+                update_data.append((checksum, directory, filename))
+
+        if not update_data:
+            return 0
+
+        # Use safe database operation with corruption detection
+        def update_operation():
+            self.conn.execute("BEGIN TRANSACTION")
+            try:
+                update_sql = """
+                UPDATE files
+                SET checksum = ?, indexed_at = CURRENT_TIMESTAMP
+                WHERE path = ? AND filename = ?
+                """
+                self.conn.executemany(update_sql, update_data)
+                self.conn.execute("COMMIT")
+                return len(update_data)
+            except Exception as e:
+                self.conn.execute("ROLLBACK")
+                print(f"Database update failed: {e}")
+                return 0
+
+        return self._safe_database_operation(update_operation)
+
+    def _process_checksum_chunk(self, file_paths: list[str]) -> int:
+        """
+        Process a small chunk of files with individual transaction.
+        
+        Args:
+            file_paths: List of file paths to process
+            
+        Returns:
+            Number of files successfully updated
+        """
+        if not file_paths:
+            return 0
+
+        # Filter out symlinks, special files, and empty files
+        valid_file_paths = []
+        for file_path in file_paths:
+            if self._should_process_file(file_path, check_empty_files=True):
+                valid_file_paths.append(file_path)
+
+        if not valid_file_paths:
+            return 0
+
+        # Calculate checksums
+        checksums = self._calculate_checksums_sequential(valid_file_paths)
+
+        if not checksums:
+            return 0
+
+        # Prepare database updates
+        update_data = []
+        for file_path in valid_file_paths:
+            if file_path in checksums:
+                path_obj = Path(file_path)
+                directory = str(path_obj.parent)
+                filename = path_obj.name
+                checksum = checksums[file_path]
+                update_data.append((checksum, directory, filename))
+
+        if not update_data:
+            return 0
+
+        # Use safe database operation
+        def update_operation():
+            self.conn.execute("BEGIN TRANSACTION")
+            try:
+                update_sql = """
+                UPDATE files
+                SET checksum = ?, indexed_at = CURRENT_TIMESTAMP
+                WHERE path = ? AND filename = ?
+                """
+                self.conn.executemany(update_sql, update_data)
+                self.conn.execute("COMMIT")
+                return len(update_data)
+            except Exception as e:
+                self.conn.execute("ROLLBACK")
+                print(f"Database update failed: {e}")
+                return 0
+
+        return self._safe_database_operation(update_operation)
