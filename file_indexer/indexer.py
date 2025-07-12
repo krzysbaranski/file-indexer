@@ -1078,7 +1078,7 @@ class FileIndexer:
             )
 
     def cleanup_deleted_files(
-        self, batch_size: int = 1000, page_size: int = 10000
+        self, batch_size: int = 1000, page_size: int = 10000, dry_run: bool = False
     ) -> dict:
         """
         Check for deleted files and directories, and clean up the database.
@@ -1088,6 +1088,7 @@ class FileIndexer:
         Args:
             batch_size: Number of files to check in each batch
             page_size: Number of files to load from database in each page
+            dry_run: If True, only report what would be deleted without making changes
 
         Returns:
             Dictionary with cleanup statistics
@@ -1303,7 +1304,7 @@ class FileIndexer:
             # Delete all marked files from database at the end of the page
             if page_deleted_files:
                 print(f"Deleting {len(page_deleted_files):,} files from database...")
-                self._delete_files_from_database(page_deleted_files)
+                self._delete_files_from_database(page_deleted_files, dry_run)
 
             # Update totals
             total_deleted_files.extend(page_deleted_files)
@@ -1342,13 +1343,14 @@ class FileIndexer:
             "permission_errors": total_permission_errors,
         }
 
-    def cleanup_empty_directories(self, page_size: int = 1000) -> dict:
+    def cleanup_empty_directories(self, page_size: int = 1000, dry_run: bool = False) -> dict:
         """
         Remove empty directories from the database.
         Uses cursor-based pagination to handle large datasets efficiently.
 
         Args:
             page_size: Number of directories to process in each page
+            dry_run: If True, only report what would be deleted without making changes
 
         Returns:
             Dictionary with cleanup statistics
@@ -1450,7 +1452,7 @@ class FileIndexer:
                 print(
                     f"Deleting {len(page_deleted_directories):,} directories from database..."
                 )
-                self._delete_directories_from_database(page_deleted_directories)
+                self._delete_directories_from_database(page_deleted_directories, dry_run)
 
             # Update totals
             total_deleted_directories.extend(page_deleted_directories)
@@ -1471,14 +1473,21 @@ class FileIndexer:
             "permission_errors": total_permission_errors,
         }
 
-    def _delete_files_from_database(self, file_records: list[tuple[str, str]]) -> None:
+    def _delete_files_from_database(self, file_records: list[tuple[str, str]], dry_run: bool = False) -> None:
         """
         Delete multiple file records from the database in bulk.
 
         Args:
             file_records: List of (path, filename) tuples to delete
+            dry_run: If True, only report what would be deleted without making changes
         """
         if not file_records:
+            return
+
+        if dry_run:
+            print(f"DRY RUN: Would delete {len(file_records)} files from database")
+            for path, filename in file_records:
+                print(f"  Would delete: {path}/{filename}")
             return
 
         self.conn.execute("BEGIN TRANSACTION")
@@ -1812,14 +1821,21 @@ class FileIndexer:
         except Exception as e:
             print(f"Note: Could not create index: {e}")
 
-    def _delete_directories_from_database(self, directories: list[str]) -> None:
+    def _delete_directories_from_database(self, directories: list[str], dry_run: bool = False) -> None:
         """
         Delete all file records for the specified directories from the database.
 
         Args:
             directories: List of directory paths to delete records for
+            dry_run: If True, only report what would be deleted without making changes
         """
         if not directories:
+            return
+
+        if dry_run:
+            print(f"DRY RUN: Would delete all files from {len(directories)} directories")
+            for directory in directories:
+                print(f"  Would delete all files from: {directory}")
             return
 
         self.conn.execute("BEGIN TRANSACTION")
