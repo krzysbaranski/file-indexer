@@ -1,0 +1,56 @@
+name: Go
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.21', '1.22', '1.23']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go ${{ matrix.go-version }}
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ matrix.go-version }}
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+    
+    - name: Install dependencies
+      working-directory: ./file_indexer_go
+      run: go mod download
+    
+    - name: Run tests
+      working-directory: ./file_indexer_go
+      run: go test -v ./...
+    
+    - name: Build
+      working-directory: ./file_indexer_go
+      run: go build -v ./...
+    
+    - name: Run Go vet
+      working-directory: ./file_indexer_go
+      run: go vet ./...
+    
+    - name: Run Go fmt check
+      working-directory: ./file_indexer_go
+      run: |
+        if [ "$(gofmt -l . | wc -l)" -gt 0 ]; then
+          echo "The following files are not formatted:"
+          gofmt -l .
+          exit 1
+        fi 
