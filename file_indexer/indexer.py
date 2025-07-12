@@ -1544,9 +1544,9 @@ class FileIndexer:
             duplicate_sizes_query = """
             SELECT file_size, COUNT(*) as file_count
             FROM files
-            WHERE checksum IS NULL AND file_size > 0
+            WHERE file_size > 0
             GROUP BY file_size
-            HAVING COUNT(*) > 1
+            HAVING COUNT(*) > 1 AND SUM(CASE WHEN checksum IS NULL THEN 1 ELSE 0 END) > 0
             ORDER BY file_size
             """
             print("Skipping empty files in duplicate detection (skip_empty_files=True)")
@@ -1554,9 +1554,8 @@ class FileIndexer:
             duplicate_sizes_query = """
             SELECT file_size, COUNT(*) as file_count
             FROM files
-            WHERE checksum IS NULL
             GROUP BY file_size
-            HAVING COUNT(*) > 1
+            HAVING COUNT(*) > 1 AND SUM(CASE WHEN checksum IS NULL THEN 1 ELSE 0 END) > 0
             ORDER BY file_size
             """
 
