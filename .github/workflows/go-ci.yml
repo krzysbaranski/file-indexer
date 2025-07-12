@@ -26,16 +26,7 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
         cache: true
-    
-    - name: Cache Go modules
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('file_indexer_go/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+        cache-dependency-path: file_indexer_go/go.sum
     
     - name: Verify dependencies
       working-directory: ./file_indexer_go
