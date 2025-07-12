@@ -4,6 +4,7 @@ Core file indexing functionality using DuckDB with performance optimizations.
 
 import hashlib
 import os
+import time
 from collections.abc import Generator
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -11,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+
+
+class DatabaseCorruptionError(Exception):
+    """Raised when database corruption is detected and recovery fails."""
+    pass
 
 
 def _calculate_checksum_worker(
