@@ -75,7 +75,6 @@ class FileIndexer:
         # Use parallel processing only if explicitly enabled and max_workers > 1
         self.use_parallel_processing = use_parallel_processing and self.max_workers > 1
         self._create_table()
-        self._migrate_schema()
 
         # Statistics for optimization tracking
         self.checksum_calculations = 0
@@ -110,56 +109,7 @@ class FileIndexer:
         CREATE INDEX IF NOT EXISTS idx_file_size ON files(file_size);
         """)
 
-    def _migrate_schema(self) -> None:
-        """Migrate existing schema to support nullable checksums."""
-        try:
-            # Check if the checksum column allows NULL
-            schema_info = self.conn.execute("PRAGMA table_info(files)").fetchall()
-            checksum_column = next(
-                (col for col in schema_info if col[1] == "checksum"), None
-            )
 
-            if (
-                checksum_column and checksum_column[3] == 1
-            ):  # NOT NULL constraint exists
-                # Need to migrate: create new table, copy data, rename
-                print("Migrating database schema to support nullable checksums...")
-
-                self.conn.execute("""
-                CREATE TABLE files_new (
-                    path VARCHAR NOT NULL,
-                    filename VARCHAR NOT NULL,
-                    checksum VARCHAR,
-                    modification_datetime TIMESTAMP NOT NULL,
-                    file_size BIGINT NOT NULL,
-                    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (path, filename)
-                );
-                """)
-
-                # Copy existing data
-                self.conn.execute("""
-                INSERT INTO files_new
-                SELECT path, filename, checksum, modification_datetime, file_size, indexed_at
-                FROM files;
-                """)
-
-                # Drop old table and rename
-                self.conn.execute("DROP TABLE files;")
-                self.conn.execute("ALTER TABLE files_new RENAME TO files;")
-
-                # Recreate indexes
-                self.conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_checksum ON files(checksum);
-                CREATE INDEX IF NOT EXISTS idx_modification_datetime ON files(modification_datetime);
-                CREATE INDEX IF NOT EXISTS idx_path_filename ON files(path, filename);
-                CREATE INDEX IF NOT EXISTS idx_file_size ON files(file_size);
-                """)
-
-                print("Schema migration completed.")
-
-        except Exception as e:
-            print(f"Schema migration failed (this is normal for new databases): {e}")
 
     def _should_process_file(
         self, file_path: str | Path, check_empty_files: bool = False

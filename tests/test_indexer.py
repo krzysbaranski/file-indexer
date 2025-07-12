@@ -480,21 +480,7 @@ class TestFileIndexer:
         finally:
             calc_indexer.close()
 
-    def test_schema_migration(self):
-        """Test that schema migration works correctly."""
-        # This test is mainly to ensure the migration code doesn't crash
-        # The actual migration would require creating an old-format database
 
-        # Create a new indexer and verify it works
-        migration_indexer = FileIndexer(str(self.db_path) + "_migration")
-
-        try:
-            migration_indexer.update_database(self.test_files_dir, recursive=False)
-            stats = migration_indexer.get_stats()
-            assert stats["total_files"] > 0
-
-        finally:
-            migration_indexer.close()
 
     def test_batch_processing(self):
         """Test that batch processing works correctly."""
