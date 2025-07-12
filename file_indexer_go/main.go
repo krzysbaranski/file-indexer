@@ -701,7 +701,7 @@ func main() {
 
 	// Load existing index if it exists
 	if *directory == "" {
-		if _, err := os.Stat(*indexPath); err == nil {
+		if _, err := os.Stat(actualIndexPath); err == nil {
 			if err := indexer.LoadIndex(); err != nil {
 				log.Printf("Warning: Could not load existing index: %v", err)
 			}
