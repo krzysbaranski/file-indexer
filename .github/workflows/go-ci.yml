@@ -41,9 +41,7 @@ jobs:
       working-directory: ./file_indexer_go
       run: go mod verify
     
-    - name: Run tests
-      working-directory: ./file_indexer_go
-      run: go test -v ./...
+# Removed redundant `Run tests` step to avoid duplicate execution of `go test`.
     
     - name: Run tests with coverage
       working-directory: ./file_indexer_go
