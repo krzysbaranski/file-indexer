@@ -99,6 +99,11 @@ func (d *Database) InsertFile(file models.FileInfo) error {
 	_, err := d.db.Exec(`
 		INSERT INTO files (path, filename, checksum, modification_datetime, file_size, indexed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(path, filename) DO UPDATE SET
+		checksum = excluded.checksum,
+		modification_datetime = excluded.modification_datetime,
+		file_size = excluded.file_size,
+		indexed_at = excluded.indexed_at
 	`, file.Path, file.Filename, file.Checksum, file.ModificationDateTime, file.FileSize, file.IndexedAt)
 
 	if err != nil {
@@ -172,6 +177,22 @@ func (d *Database) ListFiles() ([]models.FileInfo, error) {
 	}
 
 	return files, nil
+}
+
+// GetFileByPathAndFilename retrieves a file by its path and filename.
+func (d *Database) GetFileByPathAndFilename(path, filename string) (*models.FileInfo, error) {
+	row := d.db.QueryRow("SELECT path, filename, checksum, modification_datetime, file_size, indexed_at FROM files WHERE path = ? AND filename = ?", path, filename)
+
+	var file models.FileInfo
+	err := row.Scan(&file.Path, &file.Filename, &file.Checksum, &file.ModificationDateTime, &file.FileSize, &file.IndexedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found
+		}
+		return nil, fmt.Errorf("error scanning file info: %v", err)
+	}
+
+	return &file, nil
 }
 
 // GetStats retrieves statistics from the database
