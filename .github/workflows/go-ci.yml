@@ -60,10 +60,10 @@ jobs:
       working-directory: ./file_indexer_go
       run: |
         GOOS=linux GOARCH=amd64 go build -v -o file-indexer-linux-amd64 main.go
-        GOOS=darwin GOARCH=amd64 go build -v -o file-indexer-darwin-amd64 main.go
-        GOOS=darwin GOARCH=arm64 go build -v -o file-indexer-darwin-arm64 main.go
-        GOOS=windows GOARCH=amd64 go build -v -o file-indexer-windows-amd64.exe main.go
-    
+#        GOOS=darwin GOARCH=amd64 go build -v -o file-indexer-darwin-amd64 main.go
+#        GOOS=darwin GOARCH=arm64 go build -v -o file-indexer-darwin-arm64 main.go
+#        GOOS=windows GOARCH=amd64 go build -v -o file-indexer-windows-amd64.exe main.go
+
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
