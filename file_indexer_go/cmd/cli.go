@@ -24,29 +24,29 @@ func NewCLI(indexer *indexer.Indexer) *CLI {
 
 // Config holds the CLI configuration
 type Config struct {
-	IndexPath     string
-	Directory     string
-	SearchQuery   string
-	ListFiles     bool
-	ShowStats     bool
+	IndexPath      string
+	Directory      string
+	SearchQuery    string
+	ListFiles      bool
+	ShowStats      bool
 	IncludeContent bool
-	MaxFileSize   int64
-	UseDB         bool
-	SQLQuery      string
+	MaxFileSize    int64
+	UseDB          bool
+	SQLQuery       string
 }
 
 // ParseFlags parses command-line flags and returns configuration
 func ParseFlags() *Config {
 	var (
-		indexPath     = flag.String("index", "file_index.json", "Path to the index file")
-		directory     = flag.String("dir", "", "Directory to index")
-		searchQuery   = flag.String("search", "", "Search query")
-		listFiles     = flag.Bool("list", false, "List all indexed files")
-		showStats     = flag.Bool("stats", false, "Show index statistics")
+		indexPath      = flag.String("index", "file_index.json", "Path to the index file")
+		directory      = flag.String("dir", "", "Directory to index")
+		searchQuery    = flag.String("search", "", "Search query")
+		listFiles      = flag.Bool("list", false, "List all indexed files")
+		showStats      = flag.Bool("stats", false, "Show index statistics")
 		includeContent = flag.Bool("content", false, "Include file content in index")
-		maxFileSize   = flag.Int64("max-size", 0, "Maximum file size to index (in bytes, 0 = no limit)")
-		useDB         = flag.Bool("db", false, "Use DuckDB database backend")
-		sqlQuery      = flag.String("sql", "", "Execute custom SQL query (database mode only)")
+		maxFileSize    = flag.Int64("max-size", 0, "Maximum file size to index (in bytes, 0 = no limit)")
+		useDB          = flag.Bool("db", false, "Use DuckDB database backend")
+		sqlQuery       = flag.String("sql", "", "Execute custom SQL query (database mode only)")
 	)
 	flag.Parse()
 
@@ -62,15 +62,15 @@ func ParseFlags() *Config {
 	}
 
 	return &Config{
-		IndexPath:     actualIndexPath,
-		Directory:     *directory,
-		SearchQuery:   *searchQuery,
-		ListFiles:     *listFiles,
-		ShowStats:     *showStats,
+		IndexPath:      actualIndexPath,
+		Directory:      *directory,
+		SearchQuery:    *searchQuery,
+		ListFiles:      *listFiles,
+		ShowStats:      *showStats,
 		IncludeContent: *includeContent,
-		MaxFileSize:   *maxFileSize,
-		UseDB:         *useDB,
-		SQLQuery:      *sqlQuery,
+		MaxFileSize:    *maxFileSize,
+		UseDB:          *useDB,
+		SQLQuery:       *sqlQuery,
 	}
 }
 
@@ -172,7 +172,7 @@ func (c *CLI) handleSearch(query string) error {
 	results := c.indexer.Search(query)
 	fmt.Printf("Search results for '%s':\n", query)
 	fmt.Printf("Found %d files:\n\n", len(results))
-	
+
 	for i, file := range results {
 		fmt.Printf("%d. %s", i+1, file.Path)
 		fmt.Printf(" (%d bytes)", file.FileSize)
@@ -185,7 +185,7 @@ func (c *CLI) handleSearch(query string) error {
 func (c *CLI) handleListFiles() error {
 	files := c.indexer.ListFiles()
 	fmt.Printf("Indexed files (%d total):\n\n", len(files))
-	
+
 	for i, file := range files {
 		fmt.Printf("%d. %s", i+1, file.Path)
 		fmt.Printf(" (%d bytes)", file.FileSize)
@@ -203,7 +203,7 @@ func (c *CLI) handleShowStats() error {
 	fmt.Printf("Total size: %v bytes\n", stats["total_size"])
 	fmt.Printf("Indexed time: %v\n", stats["indexed_time"])
 	fmt.Printf("Root path: %v\n", stats["root_path"])
-	
+
 	if fileTypes, ok := stats["file_types"].(map[string]int); ok {
 		fmt.Println("\nFile types:")
 		for ext, count := range fileTypes {

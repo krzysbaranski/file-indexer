@@ -409,7 +409,7 @@ func (i *Indexer) getStatsJSON() map[string]interface{} {
 
 	for _, file := range i.index.Files {
 		totalSize += file.FileSize
-		
+
 		// Extract extension from filename
 		ext := strings.ToLower(filepath.Ext(file.Filename))
 		if ext == "" {
@@ -423,6 +423,22 @@ func (i *Indexer) getStatsJSON() map[string]interface{} {
 	stats["file_types"] = fileTypes
 
 	return stats
+}
+
+// GetFileByPathAndFilename retrieves a file by its path and filename.
+func (i *Indexer) GetFileByPathAndFilename(path, filename string) (*models.FileInfo, error) {
+	if i.useDB {
+		return i.db.GetFileByPathAndFilename(path, filename)
+	}
+
+	// For JSON index, search through the files
+	for _, file := range i.index.Files {
+		if file.Path == path && file.Filename == filename {
+			return &file, nil
+		}
+	}
+
+	return nil, nil // Not found
 }
 
 // ExecuteSQL executes a custom SQL query (database mode only)
