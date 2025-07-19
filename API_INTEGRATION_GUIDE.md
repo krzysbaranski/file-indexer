@@ -14,16 +14,26 @@ The `api_backend` subproject provides a REST API for querying your DuckDB file i
 
 ## Quick Start
 
-### 1. Index Your Files (Using Main Project)
+### 1. Index Your Files
 
-First, create a file index using the main file indexer:
+You can create a file index using either the Python or Go implementation:
 
+#### Python Implementation (Recommended for API)
 ```bash
 # Index a directory with two-phase indexing (recommended)
 python -m file_indexer --two-phase /path/to/your/files --db my_files.db
 
 # Or use traditional indexing
 python -m file_indexer --scan /path/to/your/files --db my_files.db
+```
+
+#### Go Implementation
+```bash
+# Index a directory with DuckDB backend
+cd file_indexer_go
+./file_indexer_go -db -dir /path/to/your/files
+
+# The database will be created as file_index.db
 ```
 
 ### 2. Install API Backend Dependencies

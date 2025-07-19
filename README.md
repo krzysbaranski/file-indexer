@@ -1,6 +1,6 @@
 # File Indexer
 
-A high-performance file indexing tool using DuckDB with parallel processing and intelligent checksum optimization.
+A high-performance file indexing tool using DuckDB with parallel processing and intelligent checksum optimization. Available in both Python and Go implementations.
 
 [![codecov](https://codecov.io/gh/krzysbaranski/file-indexer/branch/main/graph/badge.svg)](https://codecov.io/gh/krzysbaranski/file-indexer)
 
@@ -15,17 +15,35 @@ A high-performance file indexing tool using DuckDB with parallel processing and 
 - **Flexible search capabilities**
 - **Memory-efficient batch processing**
 - **Automatic filtering** of symbolic links, device files, pipes, sockets, and other special files
+- **Multiple implementations** - Python (full-featured) and Go (lightweight)
+
+## Implementations
+
+### Python Implementation (Full-Featured)
+The Python implementation provides comprehensive file indexing with DuckDB backend, two-phase indexing, and advanced search capabilities.
+
+### Go Implementation (Lightweight)
+The Go implementation offers a simplified, fast file indexing tool with JSON storage and basic search functionality.
 
 ## Installation
 
+### Python Implementation
 ```bash
 poetry env 3.12
 poetry install
 ```
 
+### Go Implementation
+```bash
+cd file_indexer_go
+go build
+```
+
 ## Usage
 
-### Command Line Interface
+### Python Implementation
+
+#### Command Line Interface
 
 #### Traditional Full Indexing
 ```bash
@@ -93,7 +111,47 @@ python -m file_indexer --cleanup-empty-dirs --db my_index.db
 python -m file_indexer --cleanup --dry-run --db my_index.db
 ```
 
-### Programmatic Usage
+### Go Implementation
+
+#### Basic Commands
+```bash
+# Show help
+./file_indexer_go
+
+# Index a directory
+./file_indexer_go -dir /path/to/directory
+
+# Index with content (for searching within files)
+./file_indexer_go -dir /path/to/directory -content
+
+# Search for files
+./file_indexer_go -search "query"
+
+# List all indexed files
+./file_indexer_go -list
+
+# Show statistics
+./file_indexer_go -stats
+
+# Use DuckDB backend
+./file_indexer_go -db -dir /path/to/directory
+
+# Execute custom SQL query
+./file_indexer_go -db -sql "SELECT * FROM files WHERE size > 1000000"
+```
+
+#### Command Line Options
+- `-index string`: Path to the index file (default: "file_index.json")
+- `-dir string`: Directory to index
+- `-search string`: Search query
+- `-list`: List all indexed files
+- `-stats`: Show index statistics
+- `-content`: Include file content in index
+- `-max-size int`: Maximum file size to index in bytes (default: 1048576)
+- `-db`: Use DuckDB database backend
+- `-sql string`: Execute custom SQL query (database mode only)
+
+### Programmatic Usage (Python)
 
 ```python
 from file_indexer import FileIndexer
@@ -200,6 +258,7 @@ The filtering cannot be disabled. The number of skipped files is reported in the
 
 ## Configuration Options
 
+### Python Implementation
 - `--max-checksum-size`: Maximum file size for checksum calculation (default: 100MB)
 - `--batch-size`: Files processed per batch (default: 1000)
 - `--max-workers`: Parallel worker processes (default: CPU count + 4)
@@ -207,8 +266,14 @@ The filtering cannot be disabled. The number of skipped files is reported in the
 - `--no-skip-empty`: Calculate checksums for empty files (default: skip)
 - `--no-recursive`: Don't scan subdirectories (default: recursive)
 
+### Go Implementation
+- `-max-size`: Maximum file size to index in bytes (default: 1MB)
+- `-content`: Include file content in index for text search
+- `-db`: Use DuckDB database backend instead of JSON storage
+
 ## Database Schema
 
+### Python Implementation (DuckDB)
 The tool uses DuckDB with the following schema:
 
 ```sql
@@ -223,12 +288,16 @@ CREATE TABLE files (
 );
 ```
 
+### Go Implementation
+The Go implementation supports both JSON file storage and DuckDB backend with similar schema.
+
 ## Examples
 
-See `examples/example_usage.py` for comprehensive usage examples.
+See `examples/example_usage.py` for comprehensive Python usage examples.
 
 ## Performance Tips
 
+### Python Implementation
 1. **Use two-phase indexing** for large datasets
 2. **Adjust batch size** based on available memory
 3. **Set appropriate checksum size limits** for your use case
@@ -236,7 +305,26 @@ See `examples/example_usage.py` for comprehensive usage examples.
 5. **Run Phase 2 separately** for operational flexibility
 6. **Use sequential processing** (`--sequential` or `--max-workers 1`) on systems with multiprocessing restrictions
 
+### Go Implementation
+1. **Use DuckDB backend** for large datasets and advanced queries
+2. **Limit content indexing** to text files for better performance
+3. **Set appropriate max-size limits** to avoid memory issues
+4. **Use JSON storage** for simple use cases and portability
+
 ## Troubleshooting
+
+### DuckDB Module Issues
+If you encounter DuckDB module resolution errors, try:
+```bash
+# Clear Go module cache
+go clean -modcache
+
+# Re-download modules
+go mod download
+
+# Tidy up dependencies
+go mod tidy
+```
 
 ### Permission Denied Errors with Parallel Processing
 
