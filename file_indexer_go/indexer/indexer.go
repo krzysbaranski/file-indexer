@@ -84,37 +84,15 @@ func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFile
 			return nil // Continue with other files
 		}
 
-		// Skip hidden files and directories
-		if strings.HasPrefix(filepath.Base(path), ".") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Skip directories - we only index files
-		if d.IsDir() {
-			return nil
-		}
-
-		info, err := d.Info()
+		// Check if the file should be skipped
+		skip, err := shouldSkipFile(path, d, maxFileSize)
 		if err != nil {
-			log.Printf("Error getting file info for %s: %v", path, err)
+			log.Printf("Error during file filtering for %s: %v", path, err)
+			return nil // Continue with other files
+		}
+		if skip {
 			return nil
 		}
-
-		// Skip special files (symlinks, etc.)
-		if !info.Mode().IsRegular() {
-			log.Printf("Skipping special file: %s", path)
-			return nil
-		}
-
-		// Skip files larger than maxFileSize
-		if maxFileSize > 0 && info.Size() > maxFileSize {
-			log.Printf("Skipping large file: %s (size: %d bytes)", path, info.Size())
-			return nil
-		}
-
 		// Get absolute path
 		absPath, err := filepath.Abs(path)
 		if err != nil {
