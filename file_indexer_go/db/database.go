@@ -255,7 +255,7 @@ func (d *Database) GetStats() (map[string]interface{}, error) {
 				if ext == "" {
 					fileTypes["no_extension"] = count
 				} else {
-					fileTypes["."+ext] = count
+					fileTypes[ext] = count
 				}
 			}
 		}
