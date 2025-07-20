@@ -54,15 +54,15 @@ func (i *Indexer) CloseDatabase() error {
 }
 
 // IndexDirectory recursively indexes all files in the given directory
-func (i *Indexer) IndexDirectory(rootPath string, includeContent bool, maxFileSize int64) error {
+func (i *Indexer) IndexDirectory(rootPath string, maxFileSize int64) error {
 	if i.useDB {
-		return i.indexDirectoryDB(rootPath, includeContent, maxFileSize)
+		return i.indexDirectoryDB(rootPath, maxFileSize)
 	}
-	return i.indexDirectoryJSON(rootPath, includeContent, maxFileSize)
+	return i.indexDirectoryJSON(rootPath, maxFileSize)
 }
 
 // indexDirectoryDB indexes files using DuckDB
-func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFileSize int64) error {
+func (i *Indexer) indexDirectoryDB(rootPath string, maxFileSize int64) error {
 	// Clear existing data
 	if err := i.db.ClearData(); err != nil {
 		return err
@@ -83,16 +83,29 @@ func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFile
 			log.Printf("Error accessing path %s: %v", path, err)
 			return nil // Continue with other files
 		}
+		info, err := d.Info()
+		if err != nil {
+			log.Printf("Error getting file info for %s: %v", path, err)
+			return nil // Continue with other files
+		}
 
 		// Check if the file should be skipped
-		skip, err := shouldSkipFile(path, d, maxFileSize)
+		skip, err := shouldSkipFile(path, d)
 		if err != nil {
 			log.Printf("Error during file filtering for %s: %v", path, err)
 			return nil // Continue with other files
 		}
 		if skip {
+			log.Printf("Skipping file: %s:", path)
 			return nil
 		}
+
+		// Skip files larger than maxFileSize
+		if maxFileSize > 0 && info.Size() > maxFileSize {
+			log.Printf("Skipping large file: %s (size: %d bytes)", path, info.Size())
+			return nil
+		}
+
 		// Get absolute path
 		absPath, err := filepath.Abs(path)
 		if err != nil {
@@ -101,6 +114,7 @@ func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFile
 		}
 
 		// Calculate checksum
+		log.Printf("Adding file: %s, size: %d", absPath, info.Size())
 		checksum, err := i.calculateChecksum(path)
 		if err != nil {
 			log.Printf("Error calculating checksum for %s: %v", path, err)
@@ -143,7 +157,7 @@ func (i *Indexer) indexDirectoryDB(rootPath string, includeContent bool, maxFile
 }
 
 // indexDirectoryJSON indexes files using JSON storage (original method)
-func (i *Indexer) indexDirectoryJSON(rootPath string, includeContent bool, maxFileSize int64) error {
+func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 	i.index.RootPath = rootPath
 	i.index.Indexed = time.Now()
 
@@ -155,29 +169,19 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, includeContent bool, maxFi
 			return nil // Continue with other files
 		}
 
-		// Skip hidden files and directories
-		if strings.HasPrefix(filepath.Base(path), ".") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		// Skip directories - we only index files
-		if d.IsDir() {
-			return nil
-		}
-
 		info, err := d.Info()
 		if err != nil {
-			log.Printf("Error getting file info for %s: %v", path, err)
+			log.Printf("Error during accsssing file %s: %v", path, err)
 			return nil
 		}
-
-		// Skip special files (symlinks, etc.)
-		if !info.Mode().IsRegular() {
-			log.Printf("Skipping special file: %s", path)
+		skip, err := shouldSkipFile(path, d)
+		if err != nil {
+			log.Printf("Error during file filtering for %s: %v", path, err)
 			return nil
+		}
+		if skip {
+			log.Printf("Skipping file: %s:", path)
+			return nil // skip file
 		}
 
 		// Skip files larger than maxFileSize
@@ -224,17 +228,55 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, includeContent bool, maxFi
 	return nil
 }
 
+func shouldSkipFile(path string, d fs.DirEntry) (bool, error) {
+	// Skip hidden files and directories
+	if strings.HasPrefix(filepath.Base(path), ".") {
+		if d.IsDir() {
+			return true, nil
+		}
+		return true, nil
+	}
+
+	// Skip directories - we only index files
+	if d.IsDir() {
+		return true, nil
+	}
+
+	info, err := d.Info()
+	if err != nil {
+		log.Printf("Error getting file info for %s: %v", path, err)
+		return true, err
+	}
+
+	// Skip special files (symlinks, etc.)
+	if !info.Mode().IsRegular() {
+		log.Printf("Skipping special file: %s", path)
+		return true, nil
+	}
+	return false, nil
+}
+
 // calculateChecksum calculates MD5 checksum of a file
 func (i *Indexer) calculateChecksum(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
 
 	hash := md5.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	_, err = io.Copy(hash, file)
+
+	// Now, close the file and capture the error.
+	closeErr := file.Close()
+
+	// The error from the primary operation (copying) is more important.
+	if err != nil {
 		return "", err
+	}
+
+	// If copying succeeded, return the error from closing the file, if any.
+	if closeErr != nil {
+		return "", closeErr
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
