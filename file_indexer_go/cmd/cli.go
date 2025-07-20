@@ -24,29 +24,27 @@ func NewCLI(indexer *indexer.Indexer) *CLI {
 
 // Config holds the CLI configuration
 type Config struct {
-	IndexPath      string
-	Directory      string
-	SearchQuery    string
-	ListFiles      bool
-	ShowStats      bool
-	IncludeContent bool
-	MaxFileSize    int64
-	UseDB          bool
-	SQLQuery       string
+	IndexPath   string
+	Directory   string
+	SearchQuery string
+	ListFiles   bool
+	ShowStats   bool
+	MaxFileSize int64
+	UseDB       bool
+	SQLQuery    string
 }
 
 // ParseFlags parses command-line flags and returns configuration
 func ParseFlags() *Config {
 	var (
-		indexPath      = flag.String("index", "file_index.json", "Path to the index file")
-		directory      = flag.String("dir", "", "Directory to index")
-		searchQuery    = flag.String("search", "", "Search query")
-		listFiles      = flag.Bool("list", false, "List all indexed files")
-		showStats      = flag.Bool("stats", false, "Show index statistics")
-		includeContent = flag.Bool("content", false, "Include file content in index")
-		maxFileSize    = flag.Int64("max-size", 0, "Maximum file size to index (in bytes, 0 = no limit)")
-		useDB          = flag.Bool("db", false, "Use DuckDB database backend")
-		sqlQuery       = flag.String("sql", "", "Execute custom SQL query (database mode only)")
+		indexPath   = flag.String("index", "file_index.json", "Path to the index file")
+		directory   = flag.String("dir", "", "Directory to index")
+		searchQuery = flag.String("search", "", "Search query")
+		listFiles   = flag.Bool("list", false, "List all indexed files")
+		showStats   = flag.Bool("stats", false, "Show index statistics")
+		maxFileSize = flag.Int64("max-size", 0, "Maximum file size to index (in bytes, 0 = no limit)")
+		useDB       = flag.Bool("db", false, "Use DuckDB database backend")
+		sqlQuery    = flag.String("sql", "", "Execute custom SQL query (database mode only)")
 	)
 	flag.Parse()
 
@@ -62,15 +60,14 @@ func ParseFlags() *Config {
 	}
 
 	return &Config{
-		IndexPath:      actualIndexPath,
-		Directory:      *directory,
-		SearchQuery:    *searchQuery,
-		ListFiles:      *listFiles,
-		ShowStats:      *showStats,
-		IncludeContent: *includeContent,
-		MaxFileSize:    *maxFileSize,
-		UseDB:          *useDB,
-		SQLQuery:       *sqlQuery,
+		IndexPath:   actualIndexPath,
+		Directory:   *directory,
+		SearchQuery: *searchQuery,
+		ListFiles:   *listFiles,
+		ShowStats:   *showStats,
+		MaxFileSize: *maxFileSize,
+		UseDB:       *useDB,
+		SQLQuery:    *sqlQuery,
 	}
 }
 
@@ -133,7 +130,7 @@ func (c *CLI) Run(config *Config) error {
 
 	// Index directory
 	if config.Directory != "" {
-		if err := c.indexer.IndexDirectory(config.Directory, config.IncludeContent, config.MaxFileSize); err != nil {
+		if err := c.indexer.IndexDirectory(config.Directory, config.MaxFileSize); err != nil {
 			return fmt.Errorf("error indexing directory: %v", err)
 		}
 
