@@ -175,11 +175,7 @@ func (c *CLI) handleSearch(query string) error {
 	
 	for i, file := range results {
 		fmt.Printf("%d. %s", i+1, file.Path)
-		if file.IsDir {
-			fmt.Print(" [DIR]")
-		} else {
-			fmt.Printf(" (%d bytes)", file.Size)
-		}
+		fmt.Printf(" (%d bytes)", file.FileSize)
 		fmt.Println()
 	}
 	return nil
@@ -192,11 +188,7 @@ func (c *CLI) handleListFiles() error {
 	
 	for i, file := range files {
 		fmt.Printf("%d. %s", i+1, file.Path)
-		if file.IsDir {
-			fmt.Print(" [DIR]")
-		} else {
-			fmt.Printf(" (%d bytes)", file.Size)
-		}
+		fmt.Printf(" (%d bytes)", file.FileSize)
 		fmt.Println()
 	}
 	return nil

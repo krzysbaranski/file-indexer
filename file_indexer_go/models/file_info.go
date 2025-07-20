@@ -4,13 +4,12 @@ import "time"
 
 // FileInfo represents information about an indexed file
 type FileInfo struct {
-	Path         string    `json:"path"`
-	Name         string    `json:"name"`
-	Size         int64     `json:"size"`
-	ModTime      time.Time `json:"mod_time"`
-	IsDir        bool      `json:"is_dir"`
-	Extension    string    `json:"extension"`
-	ContentLines []string  `json:"content_lines,omitempty"`
+	Path                 string    `json:"path"`
+	Filename             string    `json:"filename"`
+	Checksum             string    `json:"checksum"`
+	ModificationDateTime time.Time `json:"modification_datetime"`
+	FileSize             int64     `json:"file_size"`
+	IndexedAt            time.Time `json:"indexed_at"`
 }
 
 // Index represents the file index (for JSON compatibility)

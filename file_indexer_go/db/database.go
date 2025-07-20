@@ -30,16 +30,18 @@ func (d *Database) Init(dbPath string) error {
 		return fmt.Errorf("error opening database: %v", err)
 	}
 
+	// No special extensions needed for this schema
+
 	// Create tables
 	createTablesSQL := `
 	CREATE TABLE IF NOT EXISTS files (
-		path VARCHAR PRIMARY KEY,
-		name VARCHAR NOT NULL,
-		size BIGINT NOT NULL,
-		mod_time TIMESTAMP NOT NULL,
-		is_dir BOOLEAN NOT NULL,
-		extension VARCHAR,
-		content_lines TEXT[]
+		path VARCHAR NOT NULL,
+		filename VARCHAR NOT NULL,
+		checksum VARCHAR,
+		modification_datetime TIMESTAMP NOT NULL,
+		file_size BIGINT NOT NULL,
+		indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (path, filename)
 	);
 	
 	CREATE TABLE IF NOT EXISTS index_metadata (
@@ -47,9 +49,8 @@ func (d *Database) Init(dbPath string) error {
 		value VARCHAR
 	);
 	
-	CREATE INDEX IF NOT EXISTS idx_files_name ON files(name);
-	CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
-	CREATE INDEX IF NOT EXISTS idx_files_is_dir ON files(is_dir);
+	CREATE INDEX IF NOT EXISTS idx_files_filename ON files(filename);
+	CREATE INDEX IF NOT EXISTS idx_files_checksum ON files(checksum);
 	`
 
 	_, err = d.db.Exec(createTablesSQL)
@@ -96,9 +97,9 @@ func (d *Database) SetMetadata(key, value string) error {
 // InsertFile inserts a file record into the database
 func (d *Database) InsertFile(file models.FileInfo) error {
 	_, err := d.db.Exec(`
-		INSERT INTO files (path, name, size, mod_time, is_dir, extension, content_lines)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, file.Path, file.Name, file.Size, file.ModTime, file.IsDir, file.Extension, file.ContentLines)
+		INSERT INTO files (path, filename, checksum, modification_datetime, file_size, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, file.Path, file.Filename, file.Checksum, file.ModificationDateTime, file.FileSize, file.IndexedAt)
 
 	if err != nil {
 		return fmt.Errorf("error inserting file %s: %v", file.Path, err)
@@ -109,11 +110,11 @@ func (d *Database) InsertFile(file models.FileInfo) error {
 // SearchFiles searches for files in the database
 func (d *Database) SearchFiles(query string) ([]models.FileInfo, error) {
 	rows, err := d.db.Query(`
-		SELECT path, name, size, mod_time, is_dir, extension, content_lines
+		SELECT path, filename, checksum, modification_datetime, file_size, indexed_at
 		FROM files
-		WHERE name ILIKE ? OR path ILIKE ? OR (content_lines IS NOT NULL AND array_to_string(content_lines, ' ') ILIKE ?)
-		ORDER BY name
-	`, "%"+query+"%", "%"+query+"%", "%"+query+"%")
+		WHERE filename ILIKE ? OR path ILIKE ?
+		ORDER BY filename
+	`, "%"+query+"%", "%"+query+"%")
 	if err != nil {
 		return nil, fmt.Errorf("error searching files: %v", err)
 	}
@@ -122,11 +123,18 @@ func (d *Database) SearchFiles(query string) ([]models.FileInfo, error) {
 	var files []models.FileInfo
 	for rows.Next() {
 		var file models.FileInfo
-		err := rows.Scan(&file.Path, &file.Name, &file.Size, &file.ModTime, &file.IsDir, &file.Extension, &file.ContentLines)
+		var checksumNullable sql.NullString
+		err := rows.Scan(&file.Path, &file.Filename, &checksumNullable, &file.ModificationDateTime, &file.FileSize, &file.IndexedAt)
 		if err != nil {
 			log.Printf("Error scanning file row: %v", err)
 			continue
 		}
+
+		// Handle nullable checksum
+		if checksumNullable.Valid {
+			file.Checksum = checksumNullable.String
+		}
+
 		files = append(files, file)
 	}
 
@@ -136,9 +144,9 @@ func (d *Database) SearchFiles(query string) ([]models.FileInfo, error) {
 // ListFiles retrieves all files from the database
 func (d *Database) ListFiles() ([]models.FileInfo, error) {
 	rows, err := d.db.Query(`
-		SELECT path, name, size, mod_time, is_dir, extension, content_lines
+		SELECT path, filename, checksum, modification_datetime, file_size, indexed_at
 		FROM files
-		ORDER BY name
+		ORDER BY filename
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("error listing files: %v", err)
@@ -148,11 +156,18 @@ func (d *Database) ListFiles() ([]models.FileInfo, error) {
 	var files []models.FileInfo
 	for rows.Next() {
 		var file models.FileInfo
-		err := rows.Scan(&file.Path, &file.Name, &file.Size, &file.ModTime, &file.IsDir, &file.Extension, &file.ContentLines)
+		var checksumNullable sql.NullString
+		err := rows.Scan(&file.Path, &file.Filename, &checksumNullable, &file.ModificationDateTime, &file.FileSize, &file.IndexedAt)
 		if err != nil {
 			log.Printf("Error scanning file row: %v", err)
 			continue
 		}
+
+		// Handle nullable checksum
+		if checksumNullable.Valid {
+			file.Checksum = checksumNullable.String
+		}
+
 		files = append(files, file)
 	}
 
@@ -173,7 +188,7 @@ func (d *Database) GetStats() (map[string]interface{}, error) {
 
 	// Get total size
 	var totalSize int64
-	err = d.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM files WHERE is_dir = false").Scan(&totalSize)
+	err = d.db.QueryRow("SELECT COALESCE(SUM(file_size), 0) FROM files").Scan(&totalSize)
 	if err != nil {
 		return nil, fmt.Errorf("error getting total size: %v", err)
 	}
@@ -195,9 +210,14 @@ func (d *Database) GetStats() (map[string]interface{}, error) {
 		stats["root_path"] = rootPath
 	}
 
-	// Get file types distribution
+	// Get file types distribution (extract extension from filename)
 	rows, err := d.db.Query(`
-		SELECT extension, COUNT(*) as count
+		SELECT 
+			CASE 
+				WHEN filename LIKE '%.%' THEN SUBSTRING(filename, INSTR(filename, '.'))
+				ELSE ''
+			END as extension, 
+			COUNT(*) as count
 		FROM files
 		GROUP BY extension
 		ORDER BY count DESC
@@ -211,7 +231,11 @@ func (d *Database) GetStats() (map[string]interface{}, error) {
 			var ext string
 			var count int
 			if err := rows.Scan(&ext, &count); err == nil {
-				fileTypes[ext] = count
+				if ext == "" {
+					fileTypes["no_extension"] = count
+				} else {
+					fileTypes["."+ext] = count
+				}
 			}
 		}
 		stats["file_types"] = fileTypes

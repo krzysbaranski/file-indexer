@@ -1,6 +1,6 @@
 module file_indexer_go
 
-go 1.21
+go 1.24
 
 require github.com/marcboeker/go-duckdb v1.5.3
 
