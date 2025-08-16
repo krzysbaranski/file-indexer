@@ -3,6 +3,7 @@ package checksum
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -32,6 +33,8 @@ func File(path string) (string, error) {
 
 // FilesParallel computes checksums for multiple files using goroutines
 func FilesParallel(paths []string, workerCount int) []Result {
+	fmt.Printf("Using %d workers\n", workerCount)
+
 	results := make([]Result, 0, len(paths))
 	jobs := make(chan string, len(paths))
 	out := make(chan Result, len(paths))
