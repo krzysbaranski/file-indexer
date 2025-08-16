@@ -166,7 +166,8 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			log.Printf("Error accessing path %s: %v", path, err)
-			return nil // Continue with other files
+			//return nil // Continue with other files
+			return fmt.Errorf("Error accessing path %s: %v", path, err)
 		}
 
 		info, err := d.Info()
@@ -176,8 +177,7 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 		}
 		skip, err := shouldSkipFile(path, d)
 		if err != nil {
-			log.Printf("Error during file filtering for %s: %v", path, err)
-			return nil
+			return fmt.Errorf("Error during file filtering for %s: %v", path, err)
 		}
 		if skip {
 			log.Printf("Skipping file: %s:", path)
@@ -193,15 +193,15 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 		// Get absolute path
 		absPath, err := filepath.Abs(path)
 		if err != nil {
-			log.Printf("Error getting absolute path for %s: %v", path, err)
-			absPath = path // fallback to original path
+			return fmt.Errorf("Error getting absolute path for %s: %v", path, err)
+			// absPath = path // fallback to original path
 		}
 
 		// Calculate checksum
 		checksum, err := i.calculateChecksum(path)
 		if err != nil {
-			log.Printf("Error calculating checksum for %s: %v", path, err)
 			checksum = "" // empty checksum on error
+			return fmt.Errorf("Error calculating checksum for %s: %v", path, err)
 		}
 
 		fileInfo := models.FileInfo{
