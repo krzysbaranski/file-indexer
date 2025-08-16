@@ -200,7 +200,6 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 		// Calculate checksum
 		checksum, err := i.calculateChecksum(path)
 		if err != nil {
-			checksum = "" // empty checksum on error
 			return fmt.Errorf("Error calculating checksum for %s: %v", path, err)
 		}
 
