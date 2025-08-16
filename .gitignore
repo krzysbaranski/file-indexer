@@ -1,4 +1,5 @@
 */__pycache__/*
+*/.idea/*
 .coverage
 .coverage.*
 frontend/node_modules
