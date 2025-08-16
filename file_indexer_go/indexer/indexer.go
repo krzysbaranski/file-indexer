@@ -194,7 +194,6 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 		absPath, err := filepath.Abs(path)
 		if err != nil {
 			return fmt.Errorf("Error getting absolute path for %s: %v", path, err)
-			// absPath = path // fallback to original path
 		}
 
 		// Calculate checksum
