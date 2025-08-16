@@ -1,10 +1,9 @@
 package main
 
 import (
-	"log"
-
 	"file_indexer_go/cmd"
 	"file_indexer_go/indexer"
+	"log"
 )
 
 func main() {
@@ -12,7 +11,7 @@ func main() {
 	config := cmd.ParseFlags()
 
 	// If no specific action is requested, show help
-	if config.Directory == "" && config.SearchQuery == "" && !config.ListFiles && !config.ShowStats && config.SQLQuery == "" {
+	if config.Directory == "" && config.SearchQuery == "" && !config.ListFiles && !config.ShowStats && config.SQLQuery == "" && config.ChecksumDir == "" {
 		cmd.ShowHelp()
 		return
 	}

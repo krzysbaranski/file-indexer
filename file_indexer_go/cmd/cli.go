@@ -32,6 +32,7 @@ type Config struct {
 	MaxFileSize int64
 	UseDB       bool
 	SQLQuery    string
+	ChecksumDir string // Directory to checksum
 }
 
 // ParseFlags parses command-line flags and returns configuration
@@ -45,6 +46,7 @@ func ParseFlags() *Config {
 		maxFileSize = flag.Int64("max-size", 0, "Maximum file size to index (in bytes, 0 = no limit)")
 		useDB       = flag.Bool("db", false, "Use DuckDB database backend")
 		sqlQuery    = flag.String("sql", "", "Execute custom SQL query (database mode only)")
+		checksumDir = flag.String("checksum", "", "Compute checksums for all files in a directory")
 	)
 	flag.Parse()
 
@@ -68,6 +70,7 @@ func ParseFlags() *Config {
 		MaxFileSize: *maxFileSize,
 		UseDB:       *useDB,
 		SQLQuery:    *sqlQuery,
+		ChecksumDir: *checksumDir,
 	}
 }
 
@@ -92,6 +95,9 @@ func ShowHelp() {
 	fmt.Println("  Execute SQL query (database mode only):")
 	fmt.Println("    ./file-indexer -sql 'SELECT * FROM files LIMIT 10' -db")
 	fmt.Println()
+	fmt.Println("  Compute checksums for all files in a directory:")
+	fmt.Println("    ./file-indexer -checksum /path/to/directory")
+	fmt.Println()
 	fmt.Println("  Examples:")
 	fmt.Println("    # Index with JSON storage (default)")
 	fmt.Println("    ./file-indexer -dir /path/to/directory -content")
@@ -111,6 +117,11 @@ func ShowHelp() {
 
 // Run executes the CLI based on the provided configuration
 func (c *CLI) Run(config *Config) error {
+	// Checksum feature
+	if config.ChecksumDir != "" {
+		ChecksumDirectory(config.ChecksumDir, 8) // 8 workers
+		return nil
+	}
 	// Initialize database if needed
 	if config.UseDB {
 		if err := c.indexer.InitDatabase(); err != nil {
