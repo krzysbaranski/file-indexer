@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"file_indexer_go/db"
@@ -41,16 +42,22 @@ func (i *Indexer) calculateChecksumParallelWorker(
 	maxWorkers int,
 ) {
 	fmt.Printf("Using %d workers for checksum calculation\n", maxWorkers)
+	var wg sync.WaitGroup
 	sem := make(chan struct{}, maxWorkers)
 	for file := range fileChan {
 		sem <- struct{}{} // acquire slot
+		wg.Add(1)
 		go func(file struct {
 			path    string
 			absPath string
 			info    fs.FileInfo
 		}) {
-			defer func() { <-sem }() // release slot
+			defer func() {
+				<-sem // release slot
+				wg.Done()
+			}()
 			checksum, err := i.calculateChecksum(file.path)
+			fmt.Printf("Calculated checksum for %s: %s\n", file.path, checksum)
 			fi := models.FileInfo{
 				Path:                 file.absPath,
 				Filename:             filepath.Base(file.path),
@@ -65,10 +72,7 @@ func (i *Indexer) calculateChecksumParallelWorker(
 			}{fi, err}
 		}(file)
 	}
-	// Wait for all workers to finish
-	for w := 0; w < cap(sem); w++ {
-		sem <- struct{}{}
-	}
+	wg.Wait()
 	close(resultChan)
 }
 
@@ -126,15 +130,16 @@ func (i *Indexer) indexDirectoryDB(rootPath string, maxFileSize int64) error {
 	log.Printf("Starting to index directory: %s", rootPath)
 
 	// Use channels and worker pool for parallel checksum calculation
+	// Increase buffer size to reduce blocking and improve throughput
 	fileChan := make(chan struct {
 		path    string
 		absPath string
 		info    fs.FileInfo
-	}, 100)
+	}, 5000)
 	resultChan := make(chan struct {
 		fileInfo models.FileInfo
 		err      error
-	}, 100)
+	}, 5000)
 	maxWorkers := 8 // You can make this configurable
 	go i.calculateChecksumParallelWorker(fileChan, resultChan, maxWorkers)
 
@@ -166,6 +171,8 @@ func (i *Indexer) indexDirectoryDB(rootPath string, maxFileSize int64) error {
 			log.Printf("Error getting absolute path for %s: %v", path, err)
 			absPath = path
 		}
+
+		fmt.Printf("Indexing file: %s (size: %d bytes)\n", path, info.Size())
 		fileChan <- struct {
 			path    string
 			absPath string
