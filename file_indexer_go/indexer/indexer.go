@@ -180,7 +180,9 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 			return fmt.Errorf("Error during file filtering for %s: %v", path, err)
 		}
 		if skip {
-			log.Printf("Skipping file: %s:", path)
+			if !d.IsDir() {
+				log.Printf("Skipping file: %s:", path)
+			}
 			return nil // skip file
 		}
 
