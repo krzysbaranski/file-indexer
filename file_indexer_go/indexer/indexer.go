@@ -1,5 +1,7 @@
 package indexer
 
+// calculateChecksumParallel calculates checksums for files in parallel
+
 import (
 	"crypto/md5"
 	"encoding/hex"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"file_indexer_go/db"
@@ -23,6 +26,54 @@ type Indexer struct {
 	indexPath string
 	db        *db.Database
 	useDB     bool
+}
+
+// calculateChecksumParallelWorker processes files as they are found, with backpressure.
+func (i *Indexer) calculateChecksumParallelWorker(
+	fileChan <-chan struct {
+		path    string
+		absPath string
+		info    fs.FileInfo
+	},
+	resultChan chan<- struct {
+		fileInfo models.FileInfo
+		err      error
+	},
+	maxWorkers int,
+) {
+	fmt.Printf("Using %d workers for checksum calculation\n", maxWorkers)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxWorkers)
+	for file := range fileChan {
+		sem <- struct{}{} // acquire slot
+		wg.Add(1)
+		go func(file struct {
+			path    string
+			absPath string
+			info    fs.FileInfo
+		}) {
+			defer func() {
+				<-sem // release slot
+				wg.Done()
+			}()
+			checksum, err := i.calculateChecksum(file.path)
+			fmt.Printf("Calculated checksum for %s: %s\n", file.path, checksum)
+			fi := models.FileInfo{
+				Path:                 file.absPath,
+				Filename:             filepath.Base(file.path),
+				Checksum:             checksum,
+				ModificationDateTime: file.info.ModTime(),
+				FileSize:             file.info.Size(),
+				IndexedAt:            time.Now(),
+			}
+			resultChan <- struct {
+				fileInfo models.FileInfo
+				err      error
+			}{fi, err}
+		}(file)
+	}
+	wg.Wait()
+	close(resultChan)
 }
 
 // NewIndexer creates a new file indexer
@@ -78,71 +129,75 @@ func (i *Indexer) indexDirectoryDB(rootPath string, maxFileSize int64) error {
 
 	log.Printf("Starting to index directory: %s", rootPath)
 
-	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+	// Use channels and worker pool for parallel checksum calculation
+	// Increase buffer size to reduce blocking and improve throughput
+	fileChan := make(chan struct {
+		path    string
+		absPath string
+		info    fs.FileInfo
+	}, 5000)
+	resultChan := make(chan struct {
+		fileInfo models.FileInfo
+		err      error
+	}, 5000)
+	maxWorkers := 8 // You can make this configurable
+	go i.calculateChecksumParallelWorker(fileChan, resultChan, maxWorkers)
+
+	walkErr := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			log.Printf("Error accessing path %s: %v", path, err)
-			return nil // Continue with other files
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
 			log.Printf("Error getting file info for %s: %v", path, err)
-			return nil // Continue with other files
+			return nil
 		}
-
-		// Check if the file should be skipped
 		skip, err := shouldSkipFile(path, d)
 		if err != nil {
 			log.Printf("Error during file filtering for %s: %v", path, err)
-			return nil // Continue with other files
+			return nil
 		}
 		if skip {
 			log.Printf("Skipping file: %s:", path)
 			return nil
 		}
-
-		// Skip files larger than maxFileSize
 		if maxFileSize > 0 && info.Size() > maxFileSize {
 			log.Printf("Skipping large file: %s (size: %d bytes)", path, info.Size())
 			return nil
 		}
-
-		// Get absolute path
 		absPath, err := filepath.Abs(path)
 		if err != nil {
 			log.Printf("Error getting absolute path for %s: %v", path, err)
-			absPath = path // fallback to original path
+			absPath = path
 		}
 
-		// Calculate checksum
-		log.Printf("Adding file: %s, size: %d", absPath, info.Size())
-		checksum, err := i.calculateChecksum(path)
-		if err != nil {
-			log.Printf("Error calculating checksum for %s: %v", path, err)
-			checksum = "" // empty checksum on error
-		}
-
-		fileInfo := models.FileInfo{
-			Path:                 absPath,
-			Filename:             filepath.Base(path),
-			Checksum:             checksum,
-			ModificationDateTime: info.ModTime(),
-			FileSize:             info.Size(),
-			IndexedAt:            time.Now(),
-		}
-
-		// Insert into database
-		if err := i.db.InsertFile(fileInfo); err != nil {
-			log.Printf("Error inserting file %s: %v", path, err)
-			return nil
-		}
-
-		log.Printf("Indexed file: %s (size: %d bytes)", path, info.Size())
-
+		fmt.Printf("Indexing file: %s (size: %d bytes)\n", path, info.Size())
+		fileChan <- struct {
+			path    string
+			absPath string
+			info    fs.FileInfo
+		}{path, absPath, info}
 		return nil
 	})
+	close(fileChan)
+	if walkErr != nil {
+		return fmt.Errorf("error walking directory: %v", walkErr)
+	}
 
-	if err != nil {
-		return fmt.Errorf("error walking directory: %v", err)
+	// Collect results as they are ready
+	indexedCount := 0
+	for res := range resultChan {
+		if res.err != nil {
+			log.Printf("Error calculating checksum for %s: %v", res.fileInfo.Path, res.err)
+			continue
+		}
+		if err := i.db.InsertFile(res.fileInfo); err != nil {
+			log.Printf("Error inserting file %s: %v", res.fileInfo.Path, err)
+			continue
+		}
+		log.Printf("Indexed file: %s (size: %d bytes)", res.fileInfo.Path, res.fileInfo.FileSize)
+		indexedCount++
 	}
 
 	// Get count of indexed files
@@ -163,12 +218,17 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 
 	log.Printf("Starting to index directory: %s", rootPath)
 
-	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
+	// Collect file paths and info for parallel processing
+	var filesToIndex []struct {
+		path    string
+		absPath string
+		info    fs.FileInfo
+	}
+	walkErr := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			log.Printf("Error accessing path %s: %v", path, err)
-			return nil // Continue with other files
+			return fmt.Errorf("Error accessing path %s: %v", path, err)
 		}
-
 		info, err := d.Info()
 		if err != nil {
 			log.Printf("Error during accsssing file %s: %v", path, err)
@@ -176,52 +236,48 @@ func (i *Indexer) indexDirectoryJSON(rootPath string, maxFileSize int64) error {
 		}
 		skip, err := shouldSkipFile(path, d)
 		if err != nil {
-			log.Printf("Error during file filtering for %s: %v", path, err)
-			return nil
+			return fmt.Errorf("error during file filtering for %s: %v", path, err)
 		}
 		if skip {
-			log.Printf("Skipping file: %s:", path)
-			return nil // skip file
+			if !d.IsDir() {
+				log.Printf("Skipping file: %s:", path)
+			}
+			return nil
 		}
-
-		// Skip files larger than maxFileSize
 		if maxFileSize > 0 && info.Size() > maxFileSize {
 			log.Printf("Skipping large file: %s (size: %d bytes)", path, info.Size())
 			return nil
 		}
-
-		// Get absolute path
 		absPath, err := filepath.Abs(path)
 		if err != nil {
-			log.Printf("Error getting absolute path for %s: %v", path, err)
-			absPath = path // fallback to original path
+			return fmt.Errorf("error getting absolute path for %s: %v", path, err)
 		}
-
-		// Calculate checksum
-		checksum, err := i.calculateChecksum(path)
-		if err != nil {
-			log.Printf("Error calculating checksum for %s: %v", path, err)
-			checksum = "" // empty checksum on error
-		}
-
-		fileInfo := models.FileInfo{
-			Path:                 absPath,
-			Filename:             filepath.Base(path),
-			Checksum:             checksum,
-			ModificationDateTime: info.ModTime(),
-			FileSize:             info.Size(),
-			IndexedAt:            time.Now(),
-		}
-
-		i.index.Files[absPath] = fileInfo
-
-		log.Printf("Indexed file: %s (size: %d bytes)", path, info.Size())
-
+		filesToIndex = append(filesToIndex, struct {
+			path    string
+			absPath string
+			info    fs.FileInfo
+		}{path, absPath, info})
 		return nil
 	})
+	if walkErr != nil {
+		return fmt.Errorf("error walking directory: %v", walkErr)
+	}
 
-	if err != nil {
-		return fmt.Errorf("error walking directory: %v", err)
+	// Calculate checksums in parallel
+	checksums := i.calculateChecksumParallel(filesToIndex)
+
+	for idx, file := range filesToIndex {
+		checksum := checksums[idx]
+		fileInfo := models.FileInfo{
+			Path:                 file.absPath,
+			Filename:             filepath.Base(file.path),
+			Checksum:             checksum,
+			ModificationDateTime: file.info.ModTime(),
+			FileSize:             file.info.Size(),
+			IndexedAt:            time.Now(),
+		}
+		i.index.Files[file.absPath] = fileInfo
+		log.Printf("Indexed file: %s (size: %d bytes)", file.path, file.info.Size())
 	}
 
 	log.Printf("Indexing completed. Total files indexed: %d", len(i.index.Files))
@@ -467,4 +523,33 @@ func (i *Indexer) ExecuteSQL(sqlQuery string) error {
 		return fmt.Errorf("SQL queries are only available in database mode")
 	}
 	return i.db.ExecuteSQL(sqlQuery)
+}
+
+// calculateChecksumParallel calculates checksums for files in parallel
+func (i *Indexer) calculateChecksumParallel(files []struct {
+	path    string
+	absPath string
+	info    fs.FileInfo
+}) []string {
+	results := make([]string, len(files))
+	type result struct {
+		idx      int
+		checksum string
+	}
+	ch := make(chan result, len(files))
+	for idx, file := range files {
+		go func(idx int, path string) {
+			checksum, err := i.calculateChecksum(path)
+			if err != nil {
+				checksum = ""
+			}
+			ch <- result{idx, checksum}
+		}(idx, file.path)
+	}
+	for range files {
+		r := <-ch
+		results[r.idx] = r.checksum
+	}
+	close(ch)
+	return results
 }
